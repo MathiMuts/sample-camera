@@ -1,4 +1,14 @@
-# sample_calibrator/placement_module.py
+# placement_module.py
+
+"""
+This file defines the second UI screen (`PlacementFrame`) for the application.
+
+Its purpose is to take the three calibration points from the previous step and
+use them to calculate the position, size, and rotation of a target rectangle.
+This calculated rectangle is drawn over the live video feed, allowing the user
+to visually confirm that the calibration was successful. The user can then
+either confirm the placement to proceed or go back to re-calibrate.
+"""
 
 import tkinter as tk
 from tkinter import ttk
@@ -6,7 +16,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 from itertools import combinations
-import ui_components
+from . import ui_components
 
 COLOR_RECTANGLE = (0, 255, 0) # BGR
 
@@ -19,15 +29,12 @@ class PlacementFrame(tk.Frame):
         self.final_rectangle_box = None
         self._is_active = False
 
-        # --- Layout ---
-        self.columnconfigure(0, weight=1) # Video feed column expands
+        self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
-        # --- Widgets ---
         self.video_label = tk.Label(self, borderwidth=0, highlightthickness=0, anchor=tk.NW)
         self.video_label.grid(row=0, column=0, sticky="nsew")
 
-        # --- Sidebar ---
         sidebar_config = {
             'buttons': [
                 {'text': 'Back', 'command': self.on_back},
@@ -43,7 +50,6 @@ class PlacementFrame(tk.Frame):
         sidebar = ui_components.UISidebar(self, "Step 2: Placement", instructions, sidebar_config)
         sidebar.grid(row=0, column=1, sticky="ns")
 
-        # --- MOUSE BINDINGS ---
         self.video_label.bind("<ButtonPress-2>", self.on_mouse_event)
         self.video_label.bind("<ButtonRelease-2>", self.on_mouse_event)
         self.video_label.bind("<B2-Motion>", self.on_mouse_event)
@@ -54,7 +60,7 @@ class PlacementFrame(tk.Frame):
         ret, frame = self.cap.read()
         if ret:
             frame_h, frame_w, _ = cv2.flip(frame, -1).shape
-            self.ui_state = ui_components.BaseUIState(frame_w, frame_h)
+            self.ui_state = ui_components.BaseUIState(frame_w, frame_w)
         self.video_loop()
 
     def on_hide(self):
@@ -68,6 +74,7 @@ class PlacementFrame(tk.Frame):
             frame = cv2.flip(frame, -1)
             drawing_frame = frame.copy()
             
+            # This function contains the core logic for finding the rectangle.
             self.final_rectangle_box = _calculate_and_draw_rectangle(drawing_frame, self.controller.calibrated_points)
             
             M = np.array([[self.ui_state.zoom, 0, -self.ui_state.pan_offset[0] * self.ui_state.zoom],
@@ -85,7 +92,6 @@ class PlacementFrame(tk.Frame):
         """Unified mouse event handler for pan and zoom."""
         if self.ui_state is None: return
 
-        # Map Tkinter event types to OpenCV constants
         event_map = {
             tk.EventType.ButtonPress: cv2.EVENT_MBUTTONDOWN,
             tk.EventType.ButtonRelease: cv2.EVENT_MBUTTONUP,
@@ -95,9 +101,7 @@ class PlacementFrame(tk.Frame):
 
         cv2_event = event_map.get(event.type)
         if cv2_event is not None:
-            # For MouseWheel, the delta contains the scroll direction
             flags = event.delta if cv2_event == cv2.EVENT_MOUSEWHEEL else 0
-            # Call the universal handler function
             ui_components.handle_view_controls(cv2_event, event.x, event.y, flags, self.ui_state)
 
     def on_next(self):
@@ -112,9 +116,9 @@ class PlacementFrame(tk.Frame):
 def _calculate_circumcenter(pts):
     p1, p2, p3 = pts[0], pts[1], pts[2]
     D = 2 * (p1[0] * (p2[1] - p3[1]) + p2[0] * (p3[1] - p1[1]) + p3[0] * (p1[1] - p2[1]))
-    if abs(D) < 1e-6: return None
+    if abs(D) < 1e-6: return None # Points are collinear, cannot form a triangle.
     ux = ((p1[0]**2 + p1[1]**2) * (p2[1] - p3[1]) + (p2[0]**2 + p2[1]**2) * (p3[1] - p1[1]) + (p3[0]**2 + p3[1]**2) * (p1[1] - p2[1])) / D
-    ux = ux * 1.01 # Slight offset to right
+    ux = ux * 1.01 # Small empirical offset for better alignment.
     uy = ((p1[0]**2 + p1[1]**2) * (p3[0] - p2[0]) + (p2[0]**2 + p2[1]**2) * (p1[0] - p3[0]) + (p3[0]**2 + p3[1]**2) * (p2[0] - p1[0])) / D
     return (int(ux), int(uy))
 
@@ -124,6 +128,7 @@ def _calculate_and_draw_rectangle(frame, points):
     point_pairs = combinations(pts_np, 2)
     distances = [np.linalg.norm(p1 - p2) for p1, p2 in point_pairs]
     average_distance = np.mean(distances)
+    # This scaling factor is a heuristic based on a known physical dimension.
     scaling_actor = average_distance / 142.408
     side_x, side_y = 130 * scaling_actor, 120 * scaling_actor
     center = _calculate_circumcenter(pts_np)
@@ -132,8 +137,10 @@ def _calculate_and_draw_rectangle(frame, points):
     sorted_pts = pts_np[sorted_indices]
     p_mid, p_right = sorted_pts[1], sorted_pts[2]
     dy, dx = p_right[1] - p_mid[1], p_right[0] - p_mid[0]
+    # Calculate angle and add a small empirical correction.
     angle = np.degrees(np.arctan2(dy, dx)) + 5
     rect = (center, (side_y, side_x), angle)
+    # Convert the rotated rectangle definition to four corner points for drawing.
     box = np.int32(cv2.boxPoints(rect))
     cv2.drawContours(frame, [box], 0, COLOR_RECTANGLE, 2)
     return box

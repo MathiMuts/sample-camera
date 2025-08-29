@@ -1,10 +1,23 @@
 # ui_components.py
 
+"""
+This module provides shared, reusable components for the application's UI.
+
+It contains:
+- UI style constants (colors, fonts, sizes).
+- `UISidebar`: A standardized sidebar class that can be configured with a
+  title, instructions, an image, and different button layouts.
+- `BaseUIState`: A simple class to store and manage the state of the view
+  (zoom level, pan offset).
+- `handle_view_controls`: A core function that processes mouse events to
+  implement interactive pan and zoom functionality for any video feed.
+"""
+
 import tkinter as tk
 from tkinter import ttk
 import cv2
 import numpy as np
-from PIL import Image, ImageTk # Make sure ImageTk is imported
+from PIL import Image, ImageTk
 
 # --- UI Configuration Constants ---
 SIDEBAR_WIDTH = 275
@@ -13,22 +26,20 @@ FG_COLOR_LIGHT = "#ffffff"
 FG_COLOR_MUTED = "#cccccc"
 FONT_TITLE = ("Segoe UI", 16)
 FONT_BODY = ("Segoe UI", 10)
-SIDEBAR_PADDING = 10 # Define padding as a constant
+SIDEBAR_PADDING = 10 
 
 
 class UISidebar(tk.Frame):
     """A configurable sidebar widget for the application."""
     def __init__(self, parent, title, instructions, widgets_config, image_path=None):
         super().__init__(parent, width=SIDEBAR_WIDTH, bg=BG_COLOR)
-        self.pack_propagate(False)
+        self.pack_propagate(False) # Prevents the sidebar from resizing to fit its contents.
 
         self.created_widgets = {}
 
-        # --- Title ---
         lbl_title = tk.Label(self, text=title, font=FONT_TITLE, bg=BG_COLOR, fg=FG_COLOR_LIGHT)
         lbl_title.pack(pady=10, padx=SIDEBAR_PADDING, anchor="w")
 
-        # --- Dynamic Widgets (e.g., status labels) ---
         if 'status_label' in widgets_config:
             config = widgets_config['status_label']
             status_var = config.get('textvariable')
@@ -36,30 +47,21 @@ class UISidebar(tk.Frame):
             lbl_status.pack(pady=5, padx=SIDEBAR_PADDING, anchor="w")
             self.created_widgets['status_label'] = lbl_status
 
-        # --- Instructions ---
         lbl_inst = tk.Label(self, text=instructions, justify=tk.LEFT, wraplength=SIDEBAR_WIDTH-(SIDEBAR_PADDING*2), font=FONT_BODY, bg=BG_COLOR, fg=FG_COLOR_MUTED)
         lbl_inst.pack(pady=20, padx=SIDEBAR_PADDING, anchor="w", fill="x")
 
-        # --- HELP IMAGE (NEW LOGIC) ---
         if image_path:
             try:
-                # Calculate target width based on sidebar width and padding
                 target_width = SIDEBAR_WIDTH - (SIDEBAR_PADDING * 2)
-
-                # Open and resize the image while maintaining aspect ratio
                 original_image = Image.open(image_path)
                 w, h = original_image.size
                 aspect_ratio = h / w
                 target_height = int(target_width * aspect_ratio)
-
                 resized_image = original_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
                 
-                # Convert to Tkinter-compatible image
                 self.help_photo = ImageTk.PhotoImage(resized_image)
-
-                # Create and pack the label
                 lbl_image = tk.Label(self, image=self.help_photo, bg=BG_COLOR)
-                # The .image attribute is a tkinter quirk to prevent garbage collection
+                # This is a tkinter quirk to prevent the image from being garbage collected.
                 lbl_image.image = self.help_photo 
                 lbl_image.pack(pady=(0, 20), padx=SIDEBAR_PADDING)
 
@@ -68,7 +70,6 @@ class UISidebar(tk.Frame):
             except Exception as e:
                 print(f"Error loading help image: {e}")
 
-        # --- Bottom Buttons ---
         button_frame = tk.Frame(self, bg=BG_COLOR)
         button_frame.pack(side="bottom", pady=20, padx=SIDEBAR_PADDING, fill="x")
 
@@ -80,7 +81,7 @@ class UISidebar(tk.Frame):
                 
                 if num_buttons == 1:
                     btn.pack(side="right", fill="x")
-                else:
+                else: # Special layout for two buttons.
                     side = "left" if i == 0 else "right"
                     padx = (0, 5) if i == 0 else (5, 0)
                     btn.pack(side=side, expand=True, padx=padx)
@@ -99,10 +100,7 @@ class BaseUIState:
         self.pan_start_pos = (0, 0)
 
 def handle_view_controls(event, x, y, flags, state: BaseUIState):
-    """
-    Processes mouse events for zoom and pan.
-    Expects 'x' and 'y' to be relative to the camera view's top-left corner.
-    """
+    """Processes mouse events for zoom and pan."""
     point_on_view = np.array([x, y])
     
     if event == cv2.EVENT_MBUTTONDOWN:
@@ -113,20 +111,23 @@ def handle_view_controls(event, x, y, flags, state: BaseUIState):
     elif event == cv2.EVENT_MBUTTONUP:
         state.is_panning = False
     elif event == cv2.EVENT_MOUSEWHEEL:
+        # Calculate where the mouse is on the original frame before zooming.
         mouse_pos_orig = state.pan_offset + point_on_view / state.zoom
         
         if flags > 0: new_zoom = state.zoom * 1.2
         else: new_zoom = state.zoom / 1.2
-        new_zoom = np.clip(new_zoom, 1.0, 10.0)
+        new_zoom = np.clip(new_zoom, 1.0, 10.0) # Limit zoom level.
         
+        # Adjust pan offset to keep the point under the cursor stationary ("zoom to cursor").
         state.pan_offset = mouse_pos_orig - point_on_view / new_zoom
         state.zoom = new_zoom
 
-    # Clamp pan_offset
+    # Prevent panning beyond the edges of the original frame.
     max_pan_x = state.frame_width * (1 - 1/state.zoom)
     max_pan_y = state.frame_height * (1 - 1/state.zoom)
     state.pan_offset[0] = np.clip(state.pan_offset[0], 0, max_pan_x)
     state.pan_offset[1] = np.clip(state.pan_offset[1], 0, max_pan_y)
     
+    # Return the coordinates of the event on the original, un-transformed frame.
     point_on_frame = state.pan_offset + point_on_view / state.zoom
     return point_on_frame

@@ -1,67 +1,134 @@
-# sample_calibrator/__main__.py
+# __main__.py
 
+"""
+This is the main entry point for the Sample Calibrator application.
+
+It performs the following key functions:
+1.  Initializes the main Tkinter window (`Application` class).
+2.  Finds and initializes the camera, setting the window size based on the
+    camera's native resolution.
+3.  Manages a dictionary of all UI "frames" (pages), such as calibration,
+    placement, and sample positioning.
+4.  Acts as the central "controller", holding shared state data (e.g.,
+    calibration points) and handling navigation between the different frames.
+5.  Ensures the camera is released properly when the application is closed.
+"""
+
+import tkinter as tk
 import cv2
-import calibration_module
-import placement_module
-import sample_positions_module
+from tkinter import messagebox
 
-def initialize_camera():
-    """Tries to find and open a camera."""
-    cap = cv2.VideoCapture(1) 
-    if not cap.isOpened():
-        raise RuntimeError("No camera found")
-    return cap
+# Import the new frame-based modules
+from . import calibration_module
+from . import placement_module
+from . import positions_module
+from .ui_components import SIDEBAR_WIDTH
 
-def main():
-    """Main application workflow, now with multiple states."""
-    cap = initialize_camera()
-    
-    app_state = 'calibration'
-    calibrated_points = None
-    final_rectangle_corners = None # <-- Variable to store data between states
+class Application(tk.Tk):
+    """Main application class that manages the window, state, and frames."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-    while app_state not in ['exit', 'done']:
-        
-        if app_state == 'calibration':
-            calibrated_points = calibration_module.get_three_points(cap)
-            
-            if calibrated_points:
-                app_state = 'placement'
-            else:
-                print("\nCalibration was cancelled or failed.")
-                app_state = 'exit'
+        self.title("Sample Calibrator")
 
-        elif app_state == 'placement':
-            # MODIFICATION: Expect a tuple (status, data)
-            placement_status, rectangle_data = placement_module.place_rectangle(cap, calibrated_points)
-            
-            if placement_status == 'success':
-                print("\nPlacement confirmed.")
-                final_rectangle_corners = rectangle_data # <-- Store the corners
-                app_state = 'sample_positions' # <-- Move to the new state
-            elif placement_status == 'back':
-                app_state = 'calibration'
-            else:
-                print("\nPlacement was cancelled.")
-                app_state = 'exit'
-        
-        # MODIFICATION: Add the new state logic
-        elif app_state == 'sample_positions':
-            positions_status = sample_positions_module.show_sample_positions(cap, final_rectangle_corners)
-            
-            if positions_status == 'success':
-                print("\nSample positions confirmed. Workflow complete.")
-                app_state = 'done' # Success, finish the workflow
-            elif positions_status == 'back':
-                app_state = 'placement' # User clicked 'Back', go to placement
-            else:
-                print("\nSample position selection was cancelled.")
-                app_state = 'exit' # User quit
+        # --- Camera Initialization (moved up to determine window size) ---
+        self.cap = self.initialize_camera()
+        if not self.cap:
+            messagebox.showerror("Camera Error", "Could not open video stream. Please check camera connection.")
+            self.destroy()
+            return
 
-    # --- Cleanup ---
-    print("Closing application.")
-    cap.release()
-    cv2.destroyAllWindows()
+        # --- Dynamic Window Sizing ---
+        cam_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        cam_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        window_width = cam_width + SIDEBAR_WIDTH
+        self.geometry(f"{window_width}x{cam_height}")
+        self.resizable(False, False) # Prevent resizing to maintain a fixed layout.
+
+        # --- Application Data ---
+        # State shared between different frames.
+        self.calibrated_points = None
+        self.final_rectangle_corners = None
+
+        # --- Main Container ---
+        container = tk.Frame(self, borderwidth=0, highlightthickness=0)
+        container.pack(side="top", fill="both", expand=True)
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+
+        # --- Frame Management ---
+        self.frames = {}
+        for F in (calibration_module.CalibrationFrame,
+                  placement_module.PlacementFrame,
+                  positions_module.SamplePositionsFrame):
+            page_name = F.__name__
+            # Pass the controller (self) and camera to each frame
+            frame = F(parent=container, controller=self, cap=self.cap)
+            self.frames[page_name] = frame
+            # Stack all frames in the same grid cell; we'll raise the one we want to see.
+            frame.grid(row=0, column=0, sticky="nsew")
+
+        self.show_frame("CalibrationFrame")
+
+        # Ensure camera is released on close via the window's close button.
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def initialize_camera(self):
+        """Tries to find and open a camera."""
+        # Try common camera indices
+        for i in range(5):
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                print(f"Success: Camera found on index {i}.")
+                return cap
+        print("Error: No camera found.")
+        return None
+
+    def show_frame(self, page_name):
+        """Show a frame for the given page name and start its video loop."""
+        frame = self.frames[page_name]
+        # Call a method on the frame to let it know it's being shown.
+        if hasattr(frame, 'on_show'):
+            frame.on_show()
+        frame.tkraise()
+
+    def on_closing(self):
+        """Handle window closing event."""
+        print("Closing application.")
+        if self.cap:
+            self.cap.release()
+        self.destroy()
+
+    # --- State Transition Callbacks ---
+    # These methods are called by child frames to pass data back and change pages.
+    def calibration_complete(self, points):
+        if points:
+            print("Calibration complete. Points:", points)
+            self.calibrated_points = points
+            self.show_frame("PlacementFrame")
+        else:
+            self.on_closing()
+
+    def placement_complete(self, status, rectangle_data):
+        if status == 'success':
+            print("Placement confirmed.")
+            self.final_rectangle_corners = rectangle_data
+            self.show_frame("SamplePositionsFrame")
+        elif status == 'back':
+            self.show_frame("CalibrationFrame")
+        else: # Cancelled
+            self.on_closing()
+
+    def sample_positions_complete(self, status):
+        if status == 'success':
+            print("Workflow complete. Final data available.")
+            self.on_closing()
+        elif status == 'back':
+            self.show_frame("PlacementFrame")
+        else: # Cancelled
+            self.on_closing()
+
 
 if __name__ == "__main__":
-    main()
+    app = Application()
+    app.mainloop()
