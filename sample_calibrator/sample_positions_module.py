@@ -6,6 +6,12 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 import ui_components
+import requests
+import json
+
+# --- API Configuration ---
+# IMPORTANT: Change this URL to your actual API endpoint
+PUSH_ENDPOINT_URL = "https://httpbin.org/post" # A test endpoint that echoes the request
 
 # --- Grid Configuration Constants ---
 RECT_REAL_WIDTH_MM = 130
@@ -68,12 +74,13 @@ class SamplePositionsFrame(tk.Frame):
         bottom_btn_frame = tk.Frame(sidebar, bg=ui_components.BG_COLOR)
         bottom_btn_frame.pack(side="bottom", pady=20, padx=10, fill="x")
         
-        # MODIFIED: "Back" button is now the only one on the left
-        ttk.Button(bottom_btn_frame, text="Back", command=self.on_back).pack(side="left", expand=True, padx=(0, 5))
+        # MODIFIED: This button is now dynamic (Back/Reset)
+        self.btn_left_action = ttk.Button(bottom_btn_frame, text="Back", command=self.on_back)
+        self.btn_left_action.pack(side="left", expand=True, padx=(0, 5))
         
-        # MODIFIED: Changed the button to a simple "Reset"
-        self.btn_reset = ttk.Button(bottom_btn_frame, text="Reset", command=self._reset_points, state="disabled")
-        self.btn_reset.pack(side="right", expand=True, padx=(5, 0))
+        # MODIFIED: This button is now the "Push" button
+        self.btn_push = ttk.Button(bottom_btn_frame, text="Push", command=self._push_data, state="disabled")
+        self.btn_push.pack(side="right", expand=True, padx=(5, 0))
         
         self.video_label.bind("<Button>", self.on_mouse_event)
         self.video_label.bind("<ButtonPress-2>", self.on_mouse_event)
@@ -86,7 +93,7 @@ class SamplePositionsFrame(tk.Frame):
         self.sample_points = []
         self._update_sidebar_list()
         self._on_listbox_select()
-        self.btn_reset.config(state="disabled") # Ensure reset is disabled on show
+        self._update_button_states() # Set initial button states
         ret, frame = self.cap.read()
         if ret:
             frame_h, frame_w, _ = cv2.flip(frame, -1).shape
@@ -121,7 +128,7 @@ class SamplePositionsFrame(tk.Frame):
             if point_in_real_mm is not None:
                 self.sample_points.append({'cam_coords': point_on_cam, 'real_coords': point_in_real_mm})
                 self._update_sidebar_list()
-                self.btn_reset.config(state="normal")
+                self._update_button_states()
 
         elif event.num == 3 and event.type == tk.EventType.ButtonPress:
             point_on_cam = ui_components.handle_view_controls(cv2.EVENT_RBUTTONDOWN, event.x, event.y, 0, self.ui_state)
@@ -132,8 +139,7 @@ class SamplePositionsFrame(tk.Frame):
                 if distances[min_dist_idx] < detection_radius:
                     del self.sample_points[min_dist_idx]
                     self._update_sidebar_list()
-                    if not self.sample_points:
-                        self.btn_reset.config(state="disabled")
+                    self._update_button_states()
         
         else:
             event_map = {tk.EventType.ButtonPress: cv2.EVENT_MBUTTONDOWN, tk.EventType.ButtonRelease: cv2.EVENT_MBUTTONUP, tk.EventType.Motion: cv2.EVENT_MOUSEMOVE, tk.EventType.MouseWheel: cv2.EVENT_MOUSEWHEEL}
@@ -142,6 +148,42 @@ class SamplePositionsFrame(tk.Frame):
                 flags = event.delta if cv2_event == cv2.EVENT_MOUSEWHEEL else 0
                 ui_components.handle_view_controls(cv2_event, event.x, event.y, flags, self.ui_state)
 
+    # --- NEW: Central handler for dynamic button states ---
+    def _update_button_states(self):
+        has_points = len(self.sample_points) > 0
+        if has_points:
+            self.btn_left_action.config(text="Reset", command=self._reset_points)
+            self.btn_push.config(state="normal")
+        else:
+            self.btn_left_action.config(text="Back", command=self.on_back)
+            self.btn_push.config(state="disabled")
+
+    # --- NEW: Logic for the "Push" button ---
+    def _push_data(self):
+        if not self.sample_points:
+            messagebox.showwarning("No Data", "There are no sample points to push.")
+            return
+
+        # Format data into a list of dictionaries
+        coordinates = [
+            {"x": round(float(p['real_coords'][0]), 2), "y": round(float(p['real_coords'][1]), 2)}
+            for p in self.sample_points
+        ]
+        payload = {"coordinates": coordinates}
+
+        try:
+            headers = {'Content-Type': 'application/json'}
+            response = requests.post(PUSH_ENDPOINT_URL, data=json.dumps(payload), headers=headers, timeout=10)
+            response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+
+            messagebox.showinfo("Success", f"Data successfully pushed.\nStatus Code: {response.status_code}")
+            print(f"Push successful. Response: {response.json()}")
+
+        except requests.exceptions.RequestException as e:
+            messagebox.showerror("Push Failed", f"An error occurred while sending data:\n{e}")
+            print(f"Push failed: {e}")
+
+    # --- Other methods ---
     def _transform_cam_to_real(self, point_on_cam):
         corners = self.controller.final_rectangle_corners
         if corners is None or len(corners) != 4: return None
@@ -197,22 +239,15 @@ class SamplePositionsFrame(tk.Frame):
             self.listbox.focus_set()
             self._on_listbox_select()
     
-    # NEW: Simplified reset method
     def _reset_points(self):
-        """Clears all collected sample points after confirmation."""
-        if not self.sample_points:
-            return
-        
+        if not self.sample_points: return
         if messagebox.askyesno("Confirm Reset", "Are you sure you want to remove all sample points?"):
             self.sample_points.clear()
             self._update_sidebar_list()
-            self._on_listbox_select() # Disables up/down buttons
-            self.btn_reset.config(state="disabled") # Disables reset button
+            self._on_listbox_select()
+            self._update_button_states()
     
-    # MODIFIED: This is now the only way to leave this screen, besides closing the app
     def on_back(self):
-        # We can also print the data here if desired, or just discard it.
-        # For now, we discard the points when going back.
         print("Returning to placement confirmation. Sample points cleared.")
         self.on_hide()
         self.controller.sample_positions_complete('back')
@@ -252,8 +287,8 @@ def _draw_dynamic_grid(frame, corners, ui_state, sample_points):
     for i, point in enumerate(sample_points):
         px, py = map(int, point['cam_coords'])
         label = str(i + 1)
-        cv2.circle(frame, (px, py), 2, COLOR_SAMPLE_POINT, -1, cv2.LINE_AA)
-        cv2.circle(frame, (px, py), 2, (255,255,255), 1, cv2.LINE_AA)
+        cv2.circle(frame, (px, py), 5, COLOR_SAMPLE_POINT, -1, cv2.LINE_AA)
+        cv2.circle(frame, (px, py), 5, (255,255,255), 1, cv2.LINE_AA)
         text_pos = (px + 8, py + 5)
         cv2.putText(frame, label, (text_pos[0]+1, text_pos[1]+1), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,0), 1, cv2.LINE_AA)
         cv2.putText(frame, label, text_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.4, COLOR_SAMPLE_TEXT, 1, cv2.LINE_AA)
