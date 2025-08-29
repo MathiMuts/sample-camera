@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 import cv2
 import numpy as np
+from PIL import Image, ImageTk # Make sure ImageTk is imported
 
 # --- UI Configuration Constants ---
 SIDEBAR_WIDTH = 275
@@ -12,35 +13,64 @@ FG_COLOR_LIGHT = "#ffffff"
 FG_COLOR_MUTED = "#cccccc"
 FONT_TITLE = ("Segoe UI", 16)
 FONT_BODY = ("Segoe UI", 10)
+SIDEBAR_PADDING = 10 # Define padding as a constant
 
 
 class UISidebar(tk.Frame):
     """A configurable sidebar widget for the application."""
-    def __init__(self, parent, title, instructions, widgets_config):
+    def __init__(self, parent, title, instructions, widgets_config, image_path=None):
         super().__init__(parent, width=SIDEBAR_WIDTH, bg=BG_COLOR)
-        self.pack_propagate(False) # Prevent resizing to fit content
+        self.pack_propagate(False)
 
         self.created_widgets = {}
 
         # --- Title ---
         lbl_title = tk.Label(self, text=title, font=FONT_TITLE, bg=BG_COLOR, fg=FG_COLOR_LIGHT)
-        lbl_title.pack(pady=10, padx=10, anchor="w")
+        lbl_title.pack(pady=10, padx=SIDEBAR_PADDING, anchor="w")
 
         # --- Dynamic Widgets (e.g., status labels) ---
         if 'status_label' in widgets_config:
             config = widgets_config['status_label']
             status_var = config.get('textvariable')
             lbl_status = tk.Label(self, textvariable=status_var, font=FONT_BODY, bg=BG_COLOR, fg=FG_COLOR_LIGHT)
-            lbl_status.pack(pady=5, padx=10, anchor="w")
+            lbl_status.pack(pady=5, padx=SIDEBAR_PADDING, anchor="w")
             self.created_widgets['status_label'] = lbl_status
 
         # --- Instructions ---
-        lbl_inst = tk.Label(self, text=instructions, justify=tk.LEFT, wraplength=SIDEBAR_WIDTH-20, font=FONT_BODY, bg=BG_COLOR, fg=FG_COLOR_MUTED)
-        lbl_inst.pack(pady=20, padx=10, anchor="w", fill="x")
+        lbl_inst = tk.Label(self, text=instructions, justify=tk.LEFT, wraplength=SIDEBAR_WIDTH-(SIDEBAR_PADDING*2), font=FONT_BODY, bg=BG_COLOR, fg=FG_COLOR_MUTED)
+        lbl_inst.pack(pady=20, padx=SIDEBAR_PADDING, anchor="w", fill="x")
+
+        # --- HELP IMAGE (NEW LOGIC) ---
+        if image_path:
+            try:
+                # Calculate target width based on sidebar width and padding
+                target_width = SIDEBAR_WIDTH - (SIDEBAR_PADDING * 2)
+
+                # Open and resize the image while maintaining aspect ratio
+                original_image = Image.open(image_path)
+                w, h = original_image.size
+                aspect_ratio = h / w
+                target_height = int(target_width * aspect_ratio)
+
+                resized_image = original_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+                
+                # Convert to Tkinter-compatible image
+                self.help_photo = ImageTk.PhotoImage(resized_image)
+
+                # Create and pack the label
+                lbl_image = tk.Label(self, image=self.help_photo, bg=BG_COLOR)
+                # The .image attribute is a tkinter quirk to prevent garbage collection
+                lbl_image.image = self.help_photo 
+                lbl_image.pack(pady=(0, 20), padx=SIDEBAR_PADDING)
+
+            except FileNotFoundError:
+                print(f"Warning: Help image not found at '{image_path}'")
+            except Exception as e:
+                print(f"Error loading help image: {e}")
 
         # --- Bottom Buttons ---
         button_frame = tk.Frame(self, bg=BG_COLOR)
-        button_frame.pack(side="bottom", pady=20, padx=10, fill="x")
+        button_frame.pack(side="bottom", pady=20, padx=SIDEBAR_PADDING, fill="x")
 
         if 'buttons' in widgets_config:
             buttons = widgets_config['buttons']
@@ -48,7 +78,6 @@ class UISidebar(tk.Frame):
             for i, btn_config in enumerate(buttons):
                 btn = ttk.Button(button_frame, text=btn_config['text'], command=btn_config['command'])
                 
-                # Simple packing logic for 1 or 2 buttons
                 if num_buttons == 1:
                     btn.pack(side="right", fill="x")
                 else:

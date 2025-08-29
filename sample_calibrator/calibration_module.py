@@ -1,4 +1,4 @@
-# calibration_module.py
+# sample_calibrator/calibration_module.py
 
 import tkinter as tk
 from tkinter import ttk
@@ -41,7 +41,18 @@ class CalibrationFrame(tk.Frame):
             "Pan: Middle-Click Drag\n"
             "Remove Point: Right-Click"
         )
-        sidebar = ui_components.UISidebar(self, "Step 1: Calibrate", instructions, sidebar_config)
+        
+        # --- MODIFICATION IS HERE ---
+        # We now pass the path to the help image.
+        sidebar = ui_components.UISidebar(
+            parent=self, 
+            title="Step 1: Calibrate", 
+            instructions=instructions, 
+            widgets_config=sidebar_config,
+            image_path="help-image-calibration.png"
+        )
+        # --- END OF MODIFICATION ---
+        
         sidebar.grid(row=0, column=1, sticky="ns")
 
         self.next_button = sidebar.created_widgets['Next']
@@ -53,9 +64,14 @@ class CalibrationFrame(tk.Frame):
         self.video_label.bind("<B2-Motion>", self.on_mouse_event)
         self.video_label.bind("<MouseWheel>", self.on_mouse_event)
 
+    # ... The rest of the file remains exactly the same ...
+    
     def on_show(self):
         self._is_active = True
-        self.points = []
+        if self.controller.calibrated_points:
+            self.points = list(self.controller.calibrated_points)
+        else:
+            self.points = []
         ret, frame = self.cap.read()
         if ret:
             frame_h, frame_w, _ = cv2.flip(frame, -1).shape
@@ -68,40 +84,31 @@ class CalibrationFrame(tk.Frame):
 
     def video_loop(self):
         if not self._is_active or not self.ui_state: return
-
         ret, frame = self.cap.read()
         if ret:
             frame = cv2.flip(frame, -1)
             drawing_frame = frame.copy()
-            
             M = np.array([[self.ui_state.zoom, 0, -self.ui_state.pan_offset[0] * self.ui_state.zoom],
                           [0, self.ui_state.zoom, -self.ui_state.pan_offset[1] * self.ui_state.zoom]])
             view_frame = cv2.warpAffine(drawing_frame, M, (self.ui_state.frame_width, self.ui_state.frame_height))
-
             for (px, py) in self.points:
                 disp_x = int((px - self.ui_state.pan_offset[0]) * self.ui_state.zoom)
                 disp_y = int((py - self.ui_state.pan_offset[1]) * self.ui_state.zoom)
                 cv2.circle(view_frame, (disp_x, disp_y), 7, COLOR_POINT, -1)
                 cv2.circle(view_frame, (disp_x, disp_y), 7, (255, 255, 255), 1)
-
             img = cv2.cvtColor(view_frame, cv2.COLOR_BGR2RGB)
             img_pil = Image.fromarray(img)
             self.imgtk = ImageTk.PhotoImage(image=img_pil)
             self.video_label.config(image=self.imgtk)
-
         self.after(15, self.video_loop)
 
     def on_mouse_event(self, event):
         if self.ui_state is None: return
-
-        # Left-click to add point
         if event.num == 1 and event.type == tk.EventType.ButtonPress:
             if len(self.points) < 3:
                 point_on_frame = ui_components.handle_view_controls(cv2.EVENT_LBUTTONDOWN, event.x, event.y, 0, self.ui_state)
                 self.points.append((point_on_frame[0], point_on_frame[1]))
                 self.update_ui()
-        
-        # Right-click to remove point
         elif event.num == 3 and event.type == tk.EventType.ButtonPress:
             point_on_frame = ui_components.handle_view_controls(cv2.EVENT_RBUTTONDOWN, event.x, event.y, 0, self.ui_state)
             detection_radius = 15 / self.ui_state.zoom
@@ -109,8 +116,6 @@ class CalibrationFrame(tk.Frame):
             if point_to_remove:
                 self.points.remove(point_to_remove)
                 self.update_ui()
-        
-        # Middle-click and mouse wheel for pan/zoom
         else:
             event_map = {tk.EventType.ButtonPress: cv2.EVENT_MBUTTONDOWN,
                          tk.EventType.ButtonRelease: cv2.EVENT_MBUTTONUP,

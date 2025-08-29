@@ -1,4 +1,4 @@
-# placement_module.py
+# sample_calibrator/placement_module.py
 
 import tkinter as tk
 from tkinter import ttk
@@ -27,7 +27,7 @@ class PlacementFrame(tk.Frame):
         self.video_label = tk.Label(self, borderwidth=0, highlightthickness=0, anchor=tk.NW)
         self.video_label.grid(row=0, column=0, sticky="nsew")
 
-        # --- Sidebar using UISidebar ---
+        # --- Sidebar ---
         sidebar_config = {
             'buttons': [
                 {'text': 'Back', 'command': self.on_back},
@@ -43,11 +43,11 @@ class PlacementFrame(tk.Frame):
         sidebar = ui_components.UISidebar(self, "Step 2: Placement", instructions, sidebar_config)
         sidebar.grid(row=0, column=1, sticky="ns")
 
-        # --- Mouse Bindings ---
-        self.video_label.bind("<ButtonPress-2>", lambda e: self.on_mouse_event(e.x, e.y, e.type))
-        self.video_label.bind("<ButtonRelease-2>", lambda e: self.on_mouse_event(e.x, e.y, e.type))
-        self.video_label.bind("<B2-Motion>", lambda e: self.on_mouse_event(e.x, e.y, e.type))
-        self.video_label.bind("<MouseWheel>", lambda e: self.on_mouse_event(e.x, e.y, e.type, delta=e.delta))
+        # --- MOUSE BINDINGS ---
+        self.video_label.bind("<ButtonPress-2>", self.on_mouse_event)
+        self.video_label.bind("<ButtonRelease-2>", self.on_mouse_event)
+        self.video_label.bind("<B2-Motion>", self.on_mouse_event)
+        self.video_label.bind("<MouseWheel>", self.on_mouse_event)
 
     def on_show(self):
         self._is_active = True
@@ -61,7 +61,7 @@ class PlacementFrame(tk.Frame):
         self._is_active = False
 
     def video_loop(self):
-        if not self._is_active: return
+        if not self._is_active or self.ui_state is None: return
 
         ret, frame = self.cap.read()
         if ret:
@@ -81,12 +81,24 @@ class PlacementFrame(tk.Frame):
 
         self.after(15, self.video_loop)
 
-    def on_mouse_event(self, x, y, event_type, delta=0):
+    def on_mouse_event(self, event):
+        """Unified mouse event handler for pan and zoom."""
         if self.ui_state is None: return
-        event_map = {'5': cv2.EVENT_MBUTTONDOWN, '6': cv2.EVENT_MBUTTONUP, '7': cv2.EVENT_MOUSEMOVE, '38': cv2.EVENT_MOUSEWHEEL}
-        cv2_event = event_map.get(str(event_type), cv2.EVENT_MOUSEMOVE)
-        flags = delta if cv2_event == cv2.EVENT_MOUSEWHEEL else 0
-        ui_components.handle_view_controls(cv2_event, x, y, flags, self.ui_state)
+
+        # Map Tkinter event types to OpenCV constants
+        event_map = {
+            tk.EventType.ButtonPress: cv2.EVENT_MBUTTONDOWN,
+            tk.EventType.ButtonRelease: cv2.EVENT_MBUTTONUP,
+            tk.EventType.Motion: cv2.EVENT_MOUSEMOVE,
+            tk.EventType.MouseWheel: cv2.EVENT_MOUSEWHEEL,
+        }
+
+        cv2_event = event_map.get(event.type)
+        if cv2_event is not None:
+            # For MouseWheel, the delta contains the scroll direction
+            flags = event.delta if cv2_event == cv2.EVENT_MOUSEWHEEL else 0
+            # Call the universal handler function
+            ui_components.handle_view_controls(cv2_event, event.x, event.y, flags, self.ui_state)
 
     def on_next(self):
         self.on_hide()
@@ -96,12 +108,13 @@ class PlacementFrame(tk.Frame):
         self.on_hide()
         self.controller.placement_complete('back', None)
 
-# --- Calculation functions --- (No changes below this line)
+# --- Calculation functions ---
 def _calculate_circumcenter(pts):
     p1, p2, p3 = pts[0], pts[1], pts[2]
     D = 2 * (p1[0] * (p2[1] - p3[1]) + p2[0] * (p3[1] - p1[1]) + p3[0] * (p1[1] - p2[1]))
     if abs(D) < 1e-6: return None
     ux = ((p1[0]**2 + p1[1]**2) * (p2[1] - p3[1]) + (p2[0]**2 + p2[1]**2) * (p3[1] - p1[1]) + (p3[0]**2 + p3[1]**2) * (p1[1] - p2[1])) / D
+    ux = ux * 1.01 # Slight offset to right
     uy = ((p1[0]**2 + p1[1]**2) * (p3[0] - p2[0]) + (p2[0]**2 + p2[1]**2) * (p1[0] - p3[0]) + (p3[0]**2 + p3[1]**2) * (p2[0] - p1[0])) / D
     return (int(ux), int(uy))
 
@@ -119,7 +132,7 @@ def _calculate_and_draw_rectangle(frame, points):
     sorted_pts = pts_np[sorted_indices]
     p_mid, p_right = sorted_pts[1], sorted_pts[2]
     dy, dx = p_right[1] - p_mid[1], p_right[0] - p_mid[0]
-    angle = np.degrees(np.arctan2(dy, dx)) + 5.25
+    angle = np.degrees(np.arctan2(dy, dx)) + 5
     rect = (center, (side_y, side_x), angle)
     box = np.int32(cv2.boxPoints(rect))
     cv2.drawContours(frame, [box], 0, COLOR_RECTANGLE, 2)
