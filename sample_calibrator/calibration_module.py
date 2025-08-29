@@ -1,4 +1,4 @@
-# sample_calibrator/calibration_module.py
+# calibration_module.py
 
 import tkinter as tk
 from tkinter import ttk
@@ -11,65 +11,55 @@ COLOR_POINT = (40, 40, 240) # BGR
 
 class CalibrationFrame(tk.Frame):
     def __init__(self, parent, controller, cap):
-        # We'll keep the borderless frame for good measure
         super().__init__(parent, borderwidth=0, highlightthickness=0)
         
         self.controller = controller
         self.cap = cap
-
-        self.ui_state = None 
+        self.ui_state = None
         self.points = []
+        self._is_active = False
         
-        self.columnconfigure(0, weight=1)
+        # --- Layout ---
+        self.columnconfigure(0, weight=1) # Video feed column expands
         self.rowconfigure(0, weight=1)
 
-        # --- THE DEFINITIVE FIX IS HERE ---
-        # Anchor the image to the North-West (top-left) corner of the Label.
-        # This prevents the Label from centering the image and creating a margin.
+        # --- Widgets ---
         self.video_label = tk.Label(self, borderwidth=0, highlightthickness=0, anchor=tk.NW)
-        
         self.video_label.grid(row=0, column=0, sticky="nsew")
 
-        sidebar = tk.Frame(self, width=250, bg="#2d2d2d")
-        sidebar.grid(row=0, column=1, sticky="ns")
-        
-        lbl_title = tk.Label(sidebar, text="Step 1: Calibrate", font=("Segoe UI", 16), bg="#2d2d2d", fg="white")
-        lbl_title.pack(pady=10, padx=10, anchor="w")
-
-        self.lbl_status = tk.Label(sidebar, text="Points Selected: 0/3", font=("Segoe UI", 10), bg="#2d2d2d", fg="white")
-        self.lbl_status.pack(pady=5, padx=10, anchor="w")
-
+        # --- Sidebar using UISidebar ---
+        self.status_text = tk.StringVar(value="Points Selected: 0/3")
+        sidebar_config = {
+            'status_label': {'textvariable': self.status_text},
+            'buttons': [
+                {'text': 'Next', 'command': self.on_next},
+            ]
+        }
         instructions = (
             "Click on the three designated corners.\n\n"
             "Zoom: Mouse Wheel\n"
             "Pan: Middle-Click Drag\n"
             "Remove Point: Right-Click"
         )
-        lbl_inst = tk.Label(sidebar, text=instructions, justify=tk.LEFT, font=("Segoe UI", 10), bg="#2d2d2d", fg="#cccccc")
-        lbl_inst.pack(pady=20, padx=10, fill="x")
+        sidebar = ui_components.UISidebar(self, "Step 1: Calibrate", instructions, sidebar_config)
+        sidebar.grid(row=0, column=1, sticky="ns")
 
-        self.next_button = ttk.Button(sidebar, text="Next", command=self.on_next, state="disabled")
-        self.next_button.pack(side="bottom", pady=20, padx=10, fill="x")
-        
-        self.video_label.bind("<Button-1>", self.on_left_click)
-        self.video_label.bind("<Button-3>", self.on_right_click)
-        self.video_label.bind("<ButtonPress-2>", self.on_pan_start)
-        self.video_label.bind("<ButtonRelease-2>", self.on_pan_end)
-        self.video_label.bind("<B2-Motion>", self.on_pan_move)
-        self.video_label.bind("<MouseWheel>", self.on_mouse_wheel)
+        self.next_button = sidebar.created_widgets['Next']
+        self.next_button.config(state="disabled")
 
-        self._is_active = False
+        # --- Unified Mouse Bindings ---
+        self.video_label.bind("<Button>", self.on_mouse_event)
+        self.video_label.bind("<ButtonRelease-2>", self.on_mouse_event)
+        self.video_label.bind("<B2-Motion>", self.on_mouse_event)
+        self.video_label.bind("<MouseWheel>", self.on_mouse_event)
 
-    # ... The rest of the file remains exactly the same. No logic changes are needed. ...
     def on_show(self):
         self._is_active = True
         self.points = []
-        
         ret, frame = self.cap.read()
         if ret:
             frame_h, frame_w, _ = cv2.flip(frame, -1).shape
             self.ui_state = ui_components.BaseUIState(frame_w, frame_h)
-        
         self.update_ui()
         self.video_loop()
 
@@ -77,8 +67,7 @@ class CalibrationFrame(tk.Frame):
         self._is_active = False
 
     def video_loop(self):
-        if not self._is_active or not self.ui_state:
-            return
+        if not self._is_active or not self.ui_state: return
 
         ret, frame = self.cap.read()
         if ret:
@@ -102,45 +91,38 @@ class CalibrationFrame(tk.Frame):
 
         self.after(15, self.video_loop)
 
-    def on_left_click(self, event):
-        if len(self.points) >= 3 or not self.ui_state: return
-        point_on_frame = ui_components.handle_view_controls(cv2.EVENT_LBUTTONDOWN, event.x, event.y, 0, self.ui_state)
-        print(f"Added point at: ({point_on_frame[0]:.2f}, {point_on_frame[1]:.2f})")
-        self.points.append((point_on_frame[0], point_on_frame[1]))
-        self.update_ui()
+    def on_mouse_event(self, event):
+        if self.ui_state is None: return
 
-    def on_right_click(self, event):
-        if not self.ui_state: return
-        point_on_frame = ui_components.handle_view_controls(cv2.EVENT_RBUTTONDOWN, event.x, event.y, 0, self.ui_state)
-        detection_radius = 15 / self.ui_state.zoom
-        point_to_remove = None
-        for p in self.points:
-            if np.linalg.norm(np.array(p) - point_on_frame) < detection_radius:
-                point_to_remove = p
-                break
-        if point_to_remove:
-            self.points.remove(point_to_remove)
-            print(f"Removed point near: ({point_to_remove[0]:.2f}, {point_to_remove[1]:.2f})")
-        self.update_ui()
-
-    def on_pan_start(self, event):
-        if not self.ui_state: return
-        ui_components.handle_view_controls(cv2.EVENT_MBUTTONDOWN, event.x, event.y, 0, self.ui_state)
-
-    def on_pan_end(self, event):
-        if not self.ui_state: return
-        ui_components.handle_view_controls(cv2.EVENT_MBUTTONUP, event.x, event.y, 0, self.ui_state)
-
-    def on_pan_move(self, event):
-        if not self.ui_state: return
-        ui_components.handle_view_controls(cv2.EVENT_MOUSEMOVE, event.x, event.y, 0, self.ui_state)
-
-    def on_mouse_wheel(self, event):
-        if not self.ui_state: return
-        ui_components.handle_view_controls(cv2.EVENT_MOUSEWHEEL, event.x, event.y, event.delta, self.ui_state)
+        # Left-click to add point
+        if event.num == 1 and event.type == tk.EventType.ButtonPress:
+            if len(self.points) < 3:
+                point_on_frame = ui_components.handle_view_controls(cv2.EVENT_LBUTTONDOWN, event.x, event.y, 0, self.ui_state)
+                self.points.append((point_on_frame[0], point_on_frame[1]))
+                self.update_ui()
+        
+        # Right-click to remove point
+        elif event.num == 3 and event.type == tk.EventType.ButtonPress:
+            point_on_frame = ui_components.handle_view_controls(cv2.EVENT_RBUTTONDOWN, event.x, event.y, 0, self.ui_state)
+            detection_radius = 15 / self.ui_state.zoom
+            point_to_remove = next((p for p in self.points if np.linalg.norm(np.array(p) - point_on_frame) < detection_radius), None)
+            if point_to_remove:
+                self.points.remove(point_to_remove)
+                self.update_ui()
+        
+        # Middle-click and mouse wheel for pan/zoom
+        else:
+            event_map = {tk.EventType.ButtonPress: cv2.EVENT_MBUTTONDOWN,
+                         tk.EventType.ButtonRelease: cv2.EVENT_MBUTTONUP,
+                         tk.EventType.Motion: cv2.EVENT_MOUSEMOVE,
+                         tk.EventType.MouseWheel: cv2.EVENT_MOUSEWHEEL}
+            cv2_event = event_map.get(event.type, -1)
+            if cv2_event != -1:
+                flags = event.delta if cv2_event == cv2.EVENT_MOUSEWHEEL else 0
+                ui_components.handle_view_controls(cv2_event, event.x, event.y, flags, self.ui_state)
 
     def update_ui(self):
-        self.lbl_status.config(text=f"Points Selected: {len(self.points)}/3")
+        self.status_text.set(f"Points Selected: {len(self.points)}/3")
         self.next_button.config(state="normal" if len(self.points) == 3 else "disabled")
 
     def on_next(self):

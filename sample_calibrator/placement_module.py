@@ -1,4 +1,4 @@
-# sample_calibrator/placement_module.py
+# placement_module.py
 
 import tkinter as tk
 from tkinter import ttk
@@ -12,7 +12,7 @@ COLOR_RECTANGLE = (0, 255, 0) # BGR
 
 class PlacementFrame(tk.Frame):
     def __init__(self, parent, controller, cap):
-        super().__init__(parent)
+        super().__init__(parent, borderwidth=0, highlightthickness=0)
         self.controller = controller
         self.cap = cap
         self.ui_state = None
@@ -20,37 +20,28 @@ class PlacementFrame(tk.Frame):
         self._is_active = False
 
         # --- Layout ---
-        self.columnconfigure(1, weight=1)
+        self.columnconfigure(0, weight=1) # Video feed column expands
         self.rowconfigure(0, weight=1)
 
         # --- Widgets ---
-        sidebar = tk.Frame(self, width=250, bg="#2d2d2d")
-        sidebar.grid(row=0, column=0, sticky="nsw")
-        
-        self.video_label = tk.Label(self)
-        self.video_label.grid(row=0, column=1, sticky="nsew")
+        self.video_label = tk.Label(self, borderwidth=0, highlightthickness=0, anchor=tk.NW)
+        self.video_label.grid(row=0, column=0, sticky="nsew")
 
-        # --- Sidebar Content ---
-        lbl_title = tk.Label(sidebar, text="Step 2: Placement", font=("Segoe UI", 16), bg="#2d2d2d", fg="white")
-        lbl_title.pack(pady=10, padx=10, anchor="w")
-
+        # --- Sidebar using UISidebar ---
+        sidebar_config = {
+            'buttons': [
+                {'text': 'Back', 'command': self.on_back},
+                {'text': 'Confirm', 'command': self.on_next},
+            ]
+        }
         instructions = (
             "Confirm the green rectangle is correct.\n\n"
             "If not, go 'Back' to re-calibrate.\n\n"
             "Zoom: Mouse Wheel\n"
             "Pan: Middle-Click Drag"
         )
-        lbl_inst = tk.Label(sidebar, text=instructions, justify=tk.LEFT, font=("Segoe UI", 10), bg="#2d2d2d", fg="#cccccc")
-        lbl_inst.pack(pady=20, padx=10, fill="x")
-
-        button_frame = tk.Frame(sidebar, bg="#2d2d2d")
-        button_frame.pack(side="bottom", pady=20, padx=10, fill="x")
-        
-        back_button = ttk.Button(button_frame, text="Back", command=self.on_back)
-        back_button.pack(side="left", expand=True, padx=(0, 5))
-        
-        next_button = ttk.Button(button_frame, text="Confirm", command=self.on_next)
-        next_button.pack(side="right", expand=True, padx=(5, 0))
+        sidebar = ui_components.UISidebar(self, "Step 2: Placement", instructions, sidebar_config)
+        sidebar.grid(row=0, column=1, sticky="ns")
 
         # --- Mouse Bindings ---
         self.video_label.bind("<ButtonPress-2>", lambda e: self.on_mouse_event(e.x, e.y, e.type))
@@ -77,15 +68,12 @@ class PlacementFrame(tk.Frame):
             frame = cv2.flip(frame, -1)
             drawing_frame = frame.copy()
             
-            # Draw the rectangle on the original frame
             self.final_rectangle_box = _calculate_and_draw_rectangle(drawing_frame, self.controller.calibrated_points)
             
-            # Apply zoom/pan
             M = np.array([[self.ui_state.zoom, 0, -self.ui_state.pan_offset[0] * self.ui_state.zoom],
                           [0, self.ui_state.zoom, -self.ui_state.pan_offset[1] * self.ui_state.zoom]])
             view_frame = cv2.warpAffine(drawing_frame, M, (self.ui_state.frame_width, self.ui_state.frame_height))
             
-            # Convert and display
             img = cv2.cvtColor(view_frame, cv2.COLOR_BGR2RGB)
             img_pil = Image.fromarray(img)
             self.imgtk = ImageTk.PhotoImage(image=img_pil)
@@ -108,7 +96,7 @@ class PlacementFrame(tk.Frame):
         self.on_hide()
         self.controller.placement_complete('back', None)
 
-# --- Calculation functions (copied from your original file) ---
+# --- Calculation functions --- (No changes below this line)
 def _calculate_circumcenter(pts):
     p1, p2, p3 = pts[0], pts[1], pts[2]
     D = 2 * (p1[0] * (p2[1] - p3[1]) + p2[0] * (p3[1] - p1[1]) + p3[0] * (p1[1] - p2[1]))

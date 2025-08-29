@@ -1,4 +1,4 @@
-# sample_calibrator/sample_positions_module.py
+# sample_positions_module.py
 
 import tkinter as tk
 from tkinter import ttk
@@ -13,39 +13,31 @@ COLOR_GRID_POINT = (255, 100, 0)
 
 class SamplePositionsFrame(tk.Frame):
     def __init__(self, parent, controller, cap):
-        super().__init__(parent)
+        super().__init__(parent, borderwidth=0, highlightthickness=0)
         self.controller = controller
         self.cap = cap
         self.ui_state = None
         self._is_active = False
 
-        # --- Layout & Widgets ---
-        self.columnconfigure(1, weight=1)
+        # --- Layout ---
+        self.columnconfigure(0, weight=1) # Video feed column expands
         self.rowconfigure(0, weight=1)
 
-        sidebar = tk.Frame(self, width=250, bg="#2d2d2d")
-        sidebar.grid(row=0, column=0, sticky="nsw")
-        
-        self.video_label = tk.Label(self)
-        self.video_label.grid(row=0, column=1, sticky="nsew")
+        # --- Widgets ---
+        self.video_label = tk.Label(self, borderwidth=0, highlightthickness=0, anchor=tk.NW)
+        self.video_label.grid(row=0, column=0, sticky="nsew")
 
-        # --- Sidebar Content ---
-        lbl_title = tk.Label(sidebar, text="Step 3: Confirmation", font=("Segoe UI", 16), bg="#2d2d2d", fg="white")
-        lbl_title.pack(pady=10, padx=10, anchor="w")
-
+        # --- Sidebar using UISidebar ---
+        sidebar_config = {
+            'buttons': [
+                {'text': 'Back', 'command': self.on_back},
+                {'text': 'Save and Finish', 'command': self.on_finish},
+            ]
+        }
         instructions = "Sample grid is now projected.\n\nReview the final positions."
-        lbl_inst = tk.Label(sidebar, text=instructions, justify=tk.LEFT, font=("Segoe UI", 10), bg="#2d2d2d", fg="#cccccc")
-        lbl_inst.pack(pady=20, padx=10, fill="x")
-
-        button_frame = tk.Frame(sidebar, bg="#2d2d2d")
-        button_frame.pack(side="bottom", pady=20, padx=10, fill="x")
-
-        back_button = ttk.Button(button_frame, text="Back", command=self.on_back)
-        back_button.pack(side="left", expand=True, padx=(0, 5))
-
-        finish_button = ttk.Button(button_frame, text="Save and Finish", command=self.on_finish)
-        finish_button.pack(side="right", expand=True, padx=(5, 0))
-
+        sidebar = ui_components.UISidebar(self, "Step 3: Confirmation", instructions, sidebar_config)
+        sidebar.grid(row=0, column=1, sticky="ns")
+        
         # --- Mouse Bindings ---
         self.video_label.bind("<ButtonPress-2>", lambda e: self.on_mouse_event(e.x, e.y, e.type))
         self.video_label.bind("<ButtonRelease-2>", lambda e: self.on_mouse_event(e.x, e.y, e.type))
@@ -71,15 +63,12 @@ class SamplePositionsFrame(tk.Frame):
             frame = cv2.flip(frame, -1)
             drawing_frame = frame.copy()
 
-            # Draw grid on the original frame
             _draw_grid_on_rectangle(drawing_frame, self.controller.final_rectangle_corners)
 
-            # Apply zoom/pan
             M = np.array([[self.ui_state.zoom, 0, -self.ui_state.pan_offset[0] * self.ui_state.zoom],
                           [0, self.ui_state.zoom, -self.ui_state.pan_offset[1] * self.ui_state.zoom]])
             view_frame = cv2.warpAffine(drawing_frame, M, (self.ui_state.frame_width, self.ui_state.frame_height))
             
-            # Convert and display
             img = cv2.cvtColor(view_frame, cv2.COLOR_BGR2RGB)
             img_pil = Image.fromarray(img)
             self.imgtk = ImageTk.PhotoImage(image=img_pil)
@@ -103,7 +92,7 @@ class SamplePositionsFrame(tk.Frame):
         self.controller.sample_positions_complete('back')
 
 
-# --- Grid Calculation functions (copied from your original file) ---
+# --- Grid Calculation functions --- (No changes below this line)
 def _order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
     s, diff = pts.sum(axis=1), np.diff(pts, axis=1)

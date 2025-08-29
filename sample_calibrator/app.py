@@ -3,11 +3,13 @@
 import tkinter as tk
 from tkinter import ttk
 import cv2
+from tkinter import messagebox
 
 # Import the new frame-based modules
 import calibration_module
 import placement_module
 import sample_positions_module
+from ui_components import SIDEBAR_WIDTH # Import the sidebar width
 
 class Application(tk.Tk):
     """Main application class that manages the window, state, and frames."""
@@ -15,27 +17,35 @@ class Application(tk.Tk):
         super().__init__(*args, **kwargs)
 
         self.title("Sample Calibrator")
-        self.geometry("1200x800")
+
+        # --- Camera Initialization (moved up to determine window size) ---
+        self.cap = self.initialize_camera()
+        if not self.cap:
+            messagebox.showerror("Camera Error", "Could not open video stream. Please check camera connection.")
+            self.destroy()
+            return
+
+        # --- Dynamic Window Sizing ---
+        cam_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        cam_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        window_width = cam_width + SIDEBAR_WIDTH
+        self.geometry(f"{window_width}x{cam_height}")
+        self.resizable(False, False) # Prevent resizing to maintain layout
 
         # --- Application Data ---
         self.calibrated_points = None
         self.final_rectangle_corners = None
-        
-        # --- Camera Initialization ---
-        self.cap = self.initialize_camera()
-        if not self.cap:
-            self.destroy()
-            return
 
         # --- Main Container ---
         container = tk.Frame(self, borderwidth=0, highlightthickness=0)
         container.pack(side="top", fill="both", expand=True)
         container.grid_rowconfigure(0, weight=1)
         container.grid_columnconfigure(0, weight=1)
+
         # --- Frame Management ---
         self.frames = {}
-        for F in (calibration_module.CalibrationFrame, 
-                  placement_module.PlacementFrame, 
+        for F in (calibration_module.CalibrationFrame,
+                  placement_module.PlacementFrame,
                   sample_positions_module.SamplePositionsFrame):
             page_name = F.__name__
             # Pass the controller (self) and camera to each frame
@@ -51,11 +61,14 @@ class Application(tk.Tk):
 
     def initialize_camera(self):
         """Tries to find and open a camera."""
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            print("Error: No camera found on index 1.")
-            return None
-        return cap
+        # Try common camera indices
+        for i in range(5):
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                print(f"Success: Camera found on index {i}.")
+                return cap
+        print("Error: No camera found.")
+        return None
 
     def show_frame(self, page_name):
         """Show a frame for the given page name and start its video loop."""
