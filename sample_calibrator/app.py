@@ -28,11 +28,10 @@ class Application(tk.Tk):
             return
 
         # --- Main Container ---
-        container = tk.Frame(self)
+        container = tk.Frame(self, borderwidth=0, highlightthickness=0)
         container.pack(side="top", fill="both", expand=True)
         container.grid_rowconfigure(0, weight=1)
         container.grid_columnconfigure(0, weight=1)
-
         # --- Frame Management ---
         self.frames = {}
         for F in (calibration_module.CalibrationFrame, 
@@ -52,7 +51,7 @@ class Application(tk.Tk):
 
     def initialize_camera(self):
         """Tries to find and open a camera."""
-        cap = cv2.VideoCapture(1)
+        cap = cv2.VideoCapture(0)
         if not cap.isOpened():
             print("Error: No camera found on index 1.")
             return None
