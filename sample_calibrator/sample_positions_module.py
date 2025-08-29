@@ -1,100 +1,109 @@
 # sample_calibrator/sample_positions_module.py
 
+import tkinter as tk
+from tkinter import ttk
 import cv2
 import numpy as np
+from PIL import Image, ImageTk
 import ui_components
 
 GRID_ROWS, GRID_COLS = 8, 12
 COLOR_RECTANGLE_BORDER = (0, 255, 0)
 COLOR_GRID_POINT = (255, 100, 0)
 
-class SamplePositionsUIState(ui_components.BaseUIState):
-    def __init__(self, frame_width, frame_height):
-        super().__init__(frame_width, frame_height)
-        self.hover_target = None
-        self.back_clicked = False
-        self.back_button_rect = (ui_components.SIDEBAR_WIDTH + ui_components.PADDING, ui_components.PADDING, ui_components.BUTTON_WIDTH, ui_components.BUTTON_HEIGHT)
+class SamplePositionsFrame(tk.Frame):
+    def __init__(self, parent, controller, cap):
+        super().__init__(parent)
+        self.controller = controller
+        self.cap = cap
+        self.ui_state = None
+        self._is_active = False
 
-    def check_hover(self, x, y):
-        self.hover_target = None
-        if ui_components.is_point_in_rect(x, y, self.back_button_rect): self.hover_target = 'back'
+        # --- Layout & Widgets ---
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
 
-def show_sample_positions(cap, rectangle_corners):
-    ret, frame = cap.read()
-    frame = cv2.flip(frame, -1)
-    if not ret: return None
+        sidebar = tk.Frame(self, width=250, bg="#2d2d2d")
+        sidebar.grid(row=0, column=0, sticky="nsw")
+        
+        self.video_label = tk.Label(self)
+        self.video_label.grid(row=0, column=1, sticky="nsew")
 
-    frame_h, frame_w, _ = frame.shape
-    state = SamplePositionsUIState(frame_w, frame_h)
-    
-    window_name = 'Sample Positions | Step 3 of 3'
-    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    cv2.setMouseCallback(window_name, _mouse_callback, state)
+        # --- Sidebar Content ---
+        lbl_title = tk.Label(sidebar, text="Step 3: Confirmation", font=("Segoe UI", 16), bg="#2d2d2d", fg="white")
+        lbl_title.pack(pady=10, padx=10, anchor="w")
 
-    print("\n--- Sample Positions Mode ---")
-    print("Press 'f' to toggle fullscreen. Press 'q' to finish.")
+        instructions = "Sample grid is now projected.\n\nReview the final positions."
+        lbl_inst = tk.Label(sidebar, text=instructions, justify=tk.LEFT, font=("Segoe UI", 10), bg="#2d2d2d", fg="#cccccc")
+        lbl_inst.pack(pady=20, padx=10, fill="x")
 
-    while not state.back_clicked:
-        ret, frame = cap.read()
-        frame = cv2.flip(frame, -1)
-        if not ret: break
+        button_frame = tk.Frame(sidebar, bg="#2d2d2d")
+        button_frame.pack(side="bottom", pady=20, padx=10, fill="x")
 
-        drawing_frame = frame.copy()
-        _draw_grid_on_rectangle(drawing_frame, rectangle_corners)
+        back_button = ttk.Button(button_frame, text="Back", command=self.on_back)
+        back_button.pack(side="left", expand=True, padx=(0, 5))
 
-        M = np.array([[state.zoom, 0, -state.pan_offset[0] * state.zoom],
-                      [0, state.zoom, -state.pan_offset[1] * state.zoom]])
-        view_frame = cv2.warpAffine(drawing_frame, M, (frame_w, frame_h))
+        finish_button = ttk.Button(button_frame, text="Save and Finish", command=self.on_finish)
+        finish_button.pack(side="right", expand=True, padx=(5, 0))
 
-        canvas = ui_components.create_application_canvas(view_frame, frame.shape)
-        _draw_ui(canvas, state)
-        cv2.imshow(window_name, canvas)
+        # --- Mouse Bindings ---
+        self.video_label.bind("<ButtonPress-2>", lambda e: self.on_mouse_event(e.x, e.y, e.type))
+        self.video_label.bind("<ButtonRelease-2>", lambda e: self.on_mouse_event(e.x, e.y, e.type))
+        self.video_label.bind("<B2-Motion>", lambda e: self.on_mouse_event(e.x, e.y, e.type))
+        self.video_label.bind("<MouseWheel>", lambda e: self.on_mouse_event(e.x, e.y, e.type, delta=e.delta))
 
-        key = cv2.waitKey(20) & 0xFF
-        if key == ord('q'):
-            cv2.destroyWindow(window_name)
-            return 'success'
-        elif key == ord('f'):
-            state.is_fullscreen = not state.is_fullscreen
-            fullscreen_flag = cv2.WINDOW_FULLSCREEN if state.is_fullscreen else cv2.WINDOW_NORMAL
-            cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, fullscreen_flag)
+    def on_show(self):
+        self._is_active = True
+        ret, frame = self.cap.read()
+        if ret:
+            frame_h, frame_w, _ = cv2.flip(frame, -1).shape
+            self.ui_state = ui_components.BaseUIState(frame_w, frame_h)
+        self.video_loop()
 
-    cv2.destroyWindow(window_name)
-    return 'back'
+    def on_hide(self):
+        self._is_active = False
 
-def _mouse_callback(event, x, y, flags, state: SamplePositionsUIState):
-    is_in_header = y < ui_components.HEADER_HEIGHT
-    is_in_sidebar = x < ui_components.SIDEBAR_WIDTH
+    def video_loop(self):
+        if not self._is_active: return
 
-    if is_in_header:
-        if event == cv2.EVENT_MOUSEMOVE: state.check_hover(x, y)
-        elif event == cv2.EVENT_LBUTTONDOWN:
-            if state.hover_target == 'back': state.back_clicked = True
-        return
+        ret, frame = self.cap.read()
+        if ret:
+            frame = cv2.flip(frame, -1)
+            drawing_frame = frame.copy()
 
-    if is_in_sidebar: return
-    
-    corrected_x = x - ui_components.SIDEBAR_WIDTH
-    corrected_y = y
-    ui_components.handle_view_controls(event, corrected_x, corrected_y, flags, state)
+            # Draw grid on the original frame
+            _draw_grid_on_rectangle(drawing_frame, self.controller.final_rectangle_corners)
 
-def _draw_ui(canvas, state: SamplePositionsUIState):
-    color = ui_components.COLOR_BUTTON_HOVER if state.hover_target == 'back' else ui_components.COLOR_BUTTON
-    ui_components.draw_button(canvas, "Back", state.back_button_rect, color, ui_components.COLOR_TEXT)
-    
-    text_start_x = ui_components.SIDEBAR_WIDTH + ui_components.PADDING
-    
-    title_text = "Step 3: Final Confirmation"
-    status_text = "Sample grid is now projected."
-    instruction_text_1 = "Press the 'Q' key on your keyboard to save and finish."
-    instruction_text_2 = "Click 'Back' to return to the placement step to make adjustments."
+            # Apply zoom/pan
+            M = np.array([[self.ui_state.zoom, 0, -self.ui_state.pan_offset[0] * self.ui_state.zoom],
+                          [0, self.ui_state.zoom, -self.ui_state.pan_offset[1] * self.ui_state.zoom]])
+            view_frame = cv2.warpAffine(drawing_frame, M, (self.ui_state.frame_width, self.ui_state.frame_height))
+            
+            # Convert and display
+            img = cv2.cvtColor(view_frame, cv2.COLOR_BGR2RGB)
+            img_pil = Image.fromarray(img)
+            self.imgtk = ImageTk.PhotoImage(image=img_pil)
+            self.video_label.config(image=self.imgtk)
 
-    cv2.putText(canvas, title_text, (text_start_x, ui_components.Y_TITLE), cv2.FONT_HERSHEY_SIMPLEX, 0.8, ui_components.COLOR_TEXT, 2, cv2.LINE_AA)
-    cv2.putText(canvas, status_text, (text_start_x, ui_components.Y_STATUS), cv2.FONT_HERSHEY_SIMPLEX, 0.7, ui_components.COLOR_TEXT, 1, cv2.LINE_AA)
-    cv2.putText(canvas, instruction_text_1, (text_start_x, ui_components.Y_INSTRUCTION_1), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180,180,180), 1, cv2.LINE_AA)
-    cv2.putText(canvas, instruction_text_2, (text_start_x, ui_components.Y_INSTRUCTION_2), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180,180,180), 1, cv2.LINE_AA)
+        self.after(15, self.video_loop)
 
-# --- Grid Calculation functions (unchanged) ---
+    def on_mouse_event(self, x, y, event_type, delta=0):
+        if self.ui_state is None: return
+        event_map = {'5': cv2.EVENT_MBUTTONDOWN, '6': cv2.EVENT_MBUTTONUP, '7': cv2.EVENT_MOUSEMOVE, '38': cv2.EVENT_MOUSEWHEEL}
+        cv2_event = event_map.get(str(event_type), cv2.EVENT_MOUSEMOVE)
+        flags = delta if cv2_event == cv2.EVENT_MOUSEWHEEL else 0
+        ui_components.handle_view_controls(cv2_event, x, y, flags, self.ui_state)
+
+    def on_finish(self):
+        self.on_hide()
+        self.controller.sample_positions_complete('success')
+        
+    def on_back(self):
+        self.on_hide()
+        self.controller.sample_positions_complete('back')
+
+
+# --- Grid Calculation functions (copied from your original file) ---
 def _order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
     s, diff = pts.sum(axis=1), np.diff(pts, axis=1)

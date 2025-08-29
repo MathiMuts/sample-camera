@@ -1,131 +1,165 @@
 # sample_calibrator/calibration_module.py
 
+import tkinter as tk
+from tkinter import ttk
 import cv2
 import numpy as np
-import ui_components
+from PIL import Image, ImageTk
+import ui_components # We still use this for BaseUIState and handle_view_controls
 
-COLOR_POINT = (40, 40, 240)
+COLOR_POINT = (40, 40, 240) # BGR
 
-class UIState(ui_components.BaseUIState):
-    def __init__(self, frame_width, frame_height):
-        super().__init__(frame_width, frame_height)
+class CalibrationFrame(tk.Frame):
+    def __init__(self, parent, controller, cap):
+        super().__init__(parent)
+        self.controller = controller
+        self.cap = cap
+
+        # --- State ---
+        self.ui_state = None 
         self.points = []
-        self.confirmed = False
-        self.hover_target = None
-        # Button positions are now fixed and can be pre-calculated
-        total_width = frame_width + ui_components.SIDEBAR_WIDTH
-        self.next_button_rect = (total_width - ui_components.BUTTON_WIDTH - ui_components.PADDING, 
-                                 ui_components.PADDING, 
-                                 ui_components.BUTTON_WIDTH, 
-                                 ui_components.BUTTON_HEIGHT)
-
-    def check_hover(self, x, y):
-        self.hover_target = None
-        if ui_components.is_point_in_rect(x, y, self.next_button_rect):
-            self.hover_target = 'next'
-
-def get_three_points(cap):
-    ret, frame = cap.read()
-    frame = cv2.flip(frame, -1)
-    if not ret: return None
-
-    frame_h, frame_w, _ = frame.shape
-    state = UIState(frame_w, frame_h)
-    
-    window_name = 'Calibration | Step 1 of 3'
-    # Use a fixed-size window (no WINDOW_NORMAL flag)
-    cv2.namedWindow(window_name) 
-    cv2.setMouseCallback(window_name, _mouse_callback, state)
-
-    print("--- Calibration Mode ---")
-    print("Press 'f' to toggle fullscreen. Select 3 points.")
-
-    while not state.confirmed:
-        ret, frame = cap.read()
-        frame = cv2.flip(frame, -1)
-        if not ret: break
-
-        # Create the canvas with our fixed layout
-        canvas = ui_components.create_application_canvas(frame.shape)
-
-        M = np.array([[state.zoom, 0, -state.pan_offset[0] * state.zoom],
-                      [0, state.zoom, -state.pan_offset[1] * state.zoom]])
-        view_frame = cv2.warpAffine(frame, M, (frame_w, frame_h))
-
-        # Paste the camera view onto the canvas
-        canvas[ui_components.HEADER_HEIGHT:, ui_components.SIDEBAR_WIDTH:] = view_frame
         
-        # Draw all UI elements
-        _draw_ui(canvas, state, len(state.points))
+        # --- Layout ---
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
 
-        # Draw selected points, offsetting for sidebar and header
-        for (px, py) in state.points:
-            disp_x = int((px - state.pan_offset[0]) * state.zoom) + ui_components.SIDEBAR_WIDTH
-            disp_y = int((py - state.pan_offset[1]) * state.zoom) + ui_components.HEADER_HEIGHT
-            cv2.circle(canvas, (disp_x, disp_y), 7, COLOR_POINT, -1)
-            cv2.circle(canvas, (disp_x, disp_y), 7, ui_components.COLOR_TEXT, 1)
+        # --- Widgets ---
+        # Sidebar
+        sidebar = tk.Frame(self, width=250, bg="#2d2d2d")
+        sidebar.grid(row=0, column=0, sticky="nsw")
+        
+        # Main content area for video
+        self.video_label = tk.Label(self)
+        self.video_label.grid(row=0, column=1, sticky="nsew")
 
-        cv2.imshow(window_name, canvas)
+        # --- Sidebar Content ---
+        lbl_title = tk.Label(sidebar, text="Step 1: Calibrate", font=("Segoe UI", 16), bg="#2d2d2d", fg="white")
+        lbl_title.pack(pady=10, padx=10, anchor="w")
 
-        key = cv2.waitKey(20) & 0xFF
-        if key == ord('q'):
-            state.points = None; break
-        elif key == ord('f'):
-            state.is_fullscreen = not state.is_fullscreen
-            fs_flag = cv2.WINDOW_FULLSCREEN if state.is_fullscreen else cv2.WINDOW_AUTOSIZE
-            cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, fs_flag)
+        self.lbl_status = tk.Label(sidebar, text="Points Selected: 0/3", font=("Segoe UI", 10), bg="#2d2d2d", fg="white")
+        self.lbl_status.pack(pady=5, padx=10, anchor="w")
 
-    cv2.destroyWindow(window_name)
-    return state.points if state.confirmed else None
+        instructions = (
+            "Click on the three designated corners.\n\n"
+            "Zoom: Mouse Wheel\n"
+            "Pan: Middle-Click Drag\n"
+            "Remove Point: Right-Click"
+        )
+        lbl_inst = tk.Label(sidebar, text=instructions, justify=tk.LEFT, font=("Segoe UI", 10), bg="#2d2d2d", fg="#cccccc")
+        lbl_inst.pack(pady=20, padx=10, fill="x")
 
-def _mouse_callback(event, x, y, flags, state: UIState):
-    is_in_header = y < ui_components.HEADER_HEIGHT
-    is_in_sidebar = x < ui_components.SIDEBAR_WIDTH
-    
-    if is_in_header:
-        if event == cv2.EVENT_MOUSEMOVE: state.check_hover(x, y)
-        elif event == cv2.EVENT_LBUTTONDOWN:
-            if state.hover_target == 'next' and len(state.points) == 3:
-                state.confirmed = True
-        return
-    
-    if is_in_sidebar: return
+        self.next_button = ttk.Button(sidebar, text="Next", command=self.on_next, state="disabled")
+        self.next_button.pack(side="bottom", pady=20, padx=10, fill="x")
+        
+        # --- Mouse Bindings for Video Label ---
+        self.video_label.bind("<Button-1>", self.on_mouse_click)
+        self.video_label.bind("<Button-3>", self.on_mouse_click)
+        self.video_label.bind("<ButtonPress-2>", lambda e: self.on_mouse_event(e.x, e.y, e.type))
+        self.video_label.bind("<ButtonRelease-2>", lambda e: self.on_mouse_event(e.x, e.y, e.type))
+        self.video_label.bind("<B2-Motion>", lambda e: self.on_mouse_event(e.x, e.y, e.type))
+        self.video_label.bind("<MouseWheel>", lambda e: self.on_mouse_event(e.x, e.y, e.type, delta=e.delta))
 
-    # Correct coordinates to be relative to the viewport
-    corrected_x = x - ui_components.SIDEBAR_WIDTH
-    corrected_y = y - ui_components.HEADER_HEIGHT
+        # Flag to control the video loop
+        self._is_active = False
 
-    point_on_frame = ui_components.handle_view_controls(event, corrected_x, corrected_y, flags, state)
+    def on_show(self):
+        """Called by the controller when this frame is shown."""
+        self._is_active = True
+        self.points = [] # Reset points each time we show this frame
+        
+        # Initialize UI state with the correct frame dimensions
+        ret, frame = self.cap.read()
+        if ret:
+            frame_h, frame_w, _ = cv2.flip(frame, -1).shape
+            self.ui_state = ui_components.BaseUIState(frame_w, frame_h)
+        
+        self.update_ui()
+        self.video_loop()
 
-    if event == cv2.EVENT_LBUTTONDOWN and len(state.points) < 3:
-        orig_coords = (point_on_frame[0], point_on_frame[1])
-        print(f"Added point at: ({orig_coords[0]:.2f}, {orig_coords[1]:.2f})")
-        state.points.append(orig_coords)
-    elif event == cv2.EVENT_RBUTTONDOWN:
-        detection_radius = 15 / state.zoom
-        point_to_remove = None
-        for p in state.points:
-            if np.linalg.norm(np.array(p) - point_on_frame) < detection_radius:
-                point_to_remove = p
-                break
-        if point_to_remove:
-            state.points.remove(point_to_remove)
-            print(f"Removed point near: ({point_to_remove[0]:.2f}, {point_to_remove[1]:.2f})")
+    def on_hide(self):
+        """Called by the controller before switching to another frame."""
+        self._is_active = False
 
-def _draw_ui(canvas, state: UIState, num_points):
-    next_enabled = num_points == 3
-    color = ui_components.COLOR_BUTTON_HOVER if state.hover_target == 'next' and next_enabled else (ui_components.COLOR_BUTTON if next_enabled else ui_components.COLOR_BUTTON_DISABLED)
-    text_color = ui_components.COLOR_TEXT if next_enabled else ui_components.COLOR_TEXT_DISABLED
-    ui_components.draw_button(canvas, "Next", state.next_button_rect, color, text_color)
-    
-    text_start_x = ui_components.SIDEBAR_WIDTH + ui_components.PADDING
-    
-    title_text = "Step 1: Calibrate Corner Points"
-    status_text = f"Points Selected: {num_points}/3"
-    instruction_1 = "Click on the three designated corner points on the physical rig."
-    instruction_2 = "Zoom: Mouse Wheel | Pan: Middle-Click | Remove Point: Right-Click"
-    
-    cv2.putText(canvas, title_text, (text_start_x, ui_components.Y_TITLE), cv2.FONT_HERSHEY_SIMPLEX, 0.8, ui_components.COLOR_TEXT, 2, cv2.LINE_AA)
-    cv2.putText(canvas, status_text, (text_start_x, ui_components.Y_STATUS), cv2.FONT_HERSHEY_SIMPLEX, 0.7, ui_components.COLOR_TEXT, 1, cv2.LINE_AA)
-    cv2.putText(canvas, instruction_1, (text_start_x, ui_components.Y_INSTRUCTION_1), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180,180,180), 1, cv2.LINE_AA)
-    cv2.putText(canvas, instruction_2, (text_start_x, ui_components.Y_INSTRUCTION_2), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180,180,180), 1, cv2.LINE_AA)
+    def video_loop(self):
+        """Reads a frame, processes it, and displays it."""
+        if not self._is_active:
+            return
+
+        ret, frame = self.cap.read()
+        if ret:
+            frame = cv2.flip(frame, -1)
+            
+            # Create a drawing copy
+            drawing_frame = frame.copy()
+            
+            # Apply zoom and pan transformations
+            M = np.array([[self.ui_state.zoom, 0, -self.ui_state.pan_offset[0] * self.ui_state.zoom],
+                          [0, self.ui_state.zoom, -self.ui_state.pan_offset[1] * self.ui_state.zoom]])
+            view_frame = cv2.warpAffine(drawing_frame, M, (self.ui_state.frame_width, self.ui_state.frame_height))
+
+            # Draw points on the VIEW frame (after zoom/pan)
+            for (px, py) in self.points:
+                # Transform original point coords to view coords
+                disp_x = int((px - self.ui_state.pan_offset[0]) * self.ui_state.zoom)
+                disp_y = int((py - self.ui_state.pan_offset[1]) * self.ui_state.zoom)
+                cv2.circle(view_frame, (disp_x, disp_y), 7, COLOR_POINT, -1)
+                cv2.circle(view_frame, (disp_x, disp_y), 7, (255, 255, 255), 1)
+
+            # Convert for Tkinter
+            img = cv2.cvtColor(view_frame, cv2.COLOR_BGR2RGB)
+            img_pil = Image.fromarray(img)
+            self.imgtk = ImageTk.PhotoImage(image=img_pil)
+            self.video_label.config(image=self.imgtk)
+
+        # Schedule the next frame
+        self.after(15, self.video_loop)
+
+    def on_mouse_click(self, event):
+        """Handle left and right mouse clicks to add/remove points."""
+        point_on_frame = self.on_mouse_event(event.x, event.y, event.type)
+
+        if event.num == 1 and len(self.points) < 3: # Left click
+            orig_coords = (point_on_frame[0], point_on_frame[1])
+            print(f"Added point at: ({orig_coords[0]:.2f}, {orig_coords[1]:.2f})")
+            self.points.append(orig_coords)
+
+        elif event.num == 3: # Right click
+            detection_radius = 15 / self.ui_state.zoom
+            point_to_remove = None
+            for p in self.points:
+                if np.linalg.norm(np.array(p) - point_on_frame) < detection_radius:
+                    point_to_remove = p
+                    break
+            if point_to_remove:
+                self.points.remove(point_to_remove)
+                print(f"Removed point near: ({point_to_remove[0]:.2f}, {point_to_remove[1]:.2f})")
+        
+        self.update_ui()
+
+    def on_mouse_event(self, x, y, event_type, delta=0):
+        """Generic handler for zoom/pan events."""
+        if self.ui_state is None: return
+
+        # Map Tkinter event types to OpenCV event types for the handler
+        event_map = {
+            '5': cv2.EVENT_MBUTTONDOWN,
+            '6': cv2.EVENT_MBUTTONUP,
+            '7': cv2.EVENT_MOUSEMOVE,
+            '38': cv2.EVENT_MOUSEWHEEL
+        }
+        cv2_event = event_map.get(str(event_type), cv2.EVENT_MOUSEMOVE)
+        
+        # Flags for mouse wheel
+        flags = delta if cv2_event == cv2.EVENT_MOUSEWHEEL else 0
+
+        return ui_components.handle_view_controls(cv2_event, x, y, flags, self.ui_state)
+
+    def update_ui(self):
+        """Update UI elements based on the current state."""
+        self.lbl_status.config(text=f"Points Selected: {len(self.points)}/3")
+        self.next_button.config(state="normal" if len(self.points) == 3 else "disabled")
+
+    def on_next(self):
+        """Handle Next button click."""
+        self.on_hide()
+        self.controller.calibration_complete(self.points)
