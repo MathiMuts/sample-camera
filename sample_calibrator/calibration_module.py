@@ -2,59 +2,29 @@
 
 import cv2
 import numpy as np
+import ui_components
 
-# --- UI Configuration ---
-HEADER_HEIGHT = 80
-BUTTON_WIDTH = 120
-BUTTON_HEIGHT = 40
-PADDING = 10
+COLOR_POINT = (40, 40, 240)
 
-# Colors (BGR format)
-COLOR_BACKGROUND = (45, 45, 45)
-COLOR_BUTTON = (80, 80, 80)
-COLOR_BUTTON_HOVER = (110, 110, 110)
-COLOR_BUTTON_DISABLED = (60, 60, 60)
-COLOR_TEXT = (230, 230, 230)
-COLOR_TEXT_DISABLED = (130, 130, 130)
-COLOR_POINT = (40, 40, 240) # A darker red for the points
-
-class UIState:
-    """A helper class to manage the UI state, buttons, points, and view controls."""
+class UIState(ui_components.BaseUIState):
     def __init__(self, frame_width, frame_height):
-        self.frame_width = frame_width
-        self.frame_height = frame_height
-        
-        # Point selection state
+        super().__init__(frame_width, frame_height)
         self.points = []
         self.confirmed = False
-        
-        # View control state
-        self.zoom = 1.0
-        self.pan_offset = np.array([0.0, 0.0]) # Top-left of view in original frame coordinates
-        self.is_panning = False
-        self.pan_start_pos = (0, 0)
-        
-        # UI interaction state
         self.hover_target = None
-
-        # Define button rectangles (x, y, w, h)
-        self.reset_button_rect = (PADDING, PADDING, BUTTON_WIDTH, BUTTON_HEIGHT)
-        self.next_button_rect = (frame_width - BUTTON_WIDTH - PADDING, PADDING, BUTTON_WIDTH, BUTTON_HEIGHT)
+        # Button positions are now fixed and can be pre-calculated
+        total_width = frame_width + ui_components.SIDEBAR_WIDTH
+        self.next_button_rect = (total_width - ui_components.BUTTON_WIDTH - ui_components.PADDING, 
+                                 ui_components.PADDING, 
+                                 ui_components.BUTTON_WIDTH, 
+                                 ui_components.BUTTON_HEIGHT)
 
     def check_hover(self, x, y):
-        """Updates the hover target based on mouse position."""
         self.hover_target = None
-        if _is_point_in_rect(x, y, self.reset_button_rect):
-            self.hover_target = 'reset'
-        elif _is_point_in_rect(x, y, self.next_button_rect):
+        if ui_components.is_point_in_rect(x, y, self.next_button_rect):
             self.hover_target = 'next'
 
-
 def get_three_points(cap):
-    """
-    Displays a camera feed with a clean UI header for selecting three points,
-    including zoom and pan functionality for precision.
-    """
     ret, frame = cap.read()
     frame = cv2.flip(frame, -1)
     if not ret: return None
@@ -62,149 +32,100 @@ def get_three_points(cap):
     frame_h, frame_w, _ = frame.shape
     state = UIState(frame_w, frame_h)
     
-    window_name = 'Calibration'
-    cv2.namedWindow(window_name)
+    window_name = 'Calibration | Step 1 of 3'
+    # Use a fixed-size window (no WINDOW_NORMAL flag)
+    cv2.namedWindow(window_name) 
     cv2.setMouseCallback(window_name, _mouse_callback, state)
 
     print("--- Calibration Mode ---")
-    print("Use Mouse Wheel to Zoom, Middle-Click to Pan.")
+    print("Press 'f' to toggle fullscreen. Select 3 points.")
 
     while not state.confirmed:
         ret, frame = cap.read()
         frame = cv2.flip(frame, -1)
         if not ret: break
 
-        # Create a zoomed/panned view of the current frame
+        # Create the canvas with our fixed layout
+        canvas = ui_components.create_application_canvas(frame.shape)
+
         M = np.array([[state.zoom, 0, -state.pan_offset[0] * state.zoom],
                       [0, state.zoom, -state.pan_offset[1] * state.zoom]])
         view_frame = cv2.warpAffine(frame, M, (frame_w, frame_h))
 
-        # Create the main canvas with a header
-        canvas = np.full((frame_h + HEADER_HEIGHT, frame_w, 3), COLOR_BACKGROUND, dtype=np.uint8)
-        canvas[HEADER_HEIGHT:, :] = view_frame # Paste the transformed view
-
+        # Paste the camera view onto the canvas
+        canvas[ui_components.HEADER_HEIGHT:, ui_components.SIDEBAR_WIDTH:] = view_frame
+        
+        # Draw all UI elements
         _draw_ui(canvas, state, len(state.points))
 
-        # Draw the selected points, transforming their original coordinates to the current view
+        # Draw selected points, offsetting for sidebar and header
         for (px, py) in state.points:
-            disp_x = int((px - state.pan_offset[0]) * state.zoom)
-            disp_y = int((py - state.pan_offset[1]) * state.zoom)
-            cv2.circle(canvas, (disp_x, disp_y + HEADER_HEIGHT), 7, COLOR_POINT, -1)
-            cv2.circle(canvas, (disp_x, disp_y + HEADER_HEIGHT), 7, COLOR_TEXT, 1)
+            disp_x = int((px - state.pan_offset[0]) * state.zoom) + ui_components.SIDEBAR_WIDTH
+            disp_y = int((py - state.pan_offset[1]) * state.zoom) + ui_components.HEADER_HEIGHT
+            cv2.circle(canvas, (disp_x, disp_y), 7, COLOR_POINT, -1)
+            cv2.circle(canvas, (disp_x, disp_y), 7, ui_components.COLOR_TEXT, 1)
 
         cv2.imshow(window_name, canvas)
 
         key = cv2.waitKey(20) & 0xFF
         if key == ord('q'):
-            state.points = None
-            break
+            state.points = None; break
+        elif key == ord('f'):
+            state.is_fullscreen = not state.is_fullscreen
+            fs_flag = cv2.WINDOW_FULLSCREEN if state.is_fullscreen else cv2.WINDOW_AUTOSIZE
+            cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, fs_flag)
 
     cv2.destroyWindow(window_name)
     return state.points if state.confirmed else None
 
-
 def _mouse_callback(event, x, y, flags, state: UIState):
-    """Handles all mouse events for the UI."""
-    is_in_header = y < HEADER_HEIGHT
-
-    # --- Button Clicks (Header Area) ---
+    is_in_header = y < ui_components.HEADER_HEIGHT
+    is_in_sidebar = x < ui_components.SIDEBAR_WIDTH
+    
     if is_in_header:
-        if event == cv2.EVENT_MOUSEMOVE:
-            state.check_hover(x, y)
+        if event == cv2.EVENT_MOUSEMOVE: state.check_hover(x, y)
         elif event == cv2.EVENT_LBUTTONDOWN:
             if state.hover_target == 'next' and len(state.points) == 3:
-                print("Points confirmed.")
                 state.confirmed = True
-            elif state.hover_target == 'reset':
-                print("Points reset.")
-                state.points.clear()
-        return # Do not process image-area events if in header
+        return
+    
+    if is_in_sidebar: return
 
-    # --- View Controls (Image Area) ---
-    if event == cv2.EVENT_MBUTTONDOWN:
-        state.is_panning = True
-        state.pan_start_pos = np.array([x, y])
-    elif event == cv2.EVENT_MOUSEMOVE and state.is_panning:
-        delta = (state.pan_start_pos - np.array([x, y])) / state.zoom
-        state.pan_offset += delta
-        state.pan_start_pos = np.array([x, y])
-    elif event == cv2.EVENT_MBUTTONUP:
-        state.is_panning = False
-    elif event == cv2.EVENT_MOUSEWHEEL:
-        # Calculate mouse position in original frame coordinates
-        mouse_pos_on_view = np.array([x, y - HEADER_HEIGHT])
-        mouse_pos_orig = state.pan_offset + mouse_pos_on_view / state.zoom
-        
-        # Change zoom
-        if flags > 0: state.zoom *= 1.2
-        else: state.zoom /= 1.2
-        state.zoom = np.clip(state.zoom, 1.0, 10.0)
+    # Correct coordinates to be relative to the viewport
+    corrected_x = x - ui_components.SIDEBAR_WIDTH
+    corrected_y = y - ui_components.HEADER_HEIGHT
 
-        # Adjust pan to keep mouse position stationary
-        state.pan_offset = mouse_pos_orig - mouse_pos_on_view / state.zoom
+    point_on_frame = ui_components.handle_view_controls(event, corrected_x, corrected_y, flags, state)
 
-    # Clamp pan_offset to stay within reasonable bounds
-    max_pan_x = state.frame_width * (1 - 1/state.zoom)
-    max_pan_y = state.frame_height * (1 - 1/state.zoom)
-    state.pan_offset[0] = np.clip(state.pan_offset[0], 0, max_pan_x)
-    state.pan_offset[1] = np.clip(state.pan_offset[1], 0, max_pan_y)
-
-    # Convert window click coordinates to original frame coordinates
-    point_on_view = np.array([x, y - HEADER_HEIGHT])
-    point_on_frame = state.pan_offset + point_on_view / state.zoom
-
-    # --- Point Placement (Image Area) ---
     if event == cv2.EVENT_LBUTTONDOWN and len(state.points) < 3:
-        orig_coords = (int(point_on_frame[0]), int(point_on_frame[1]))
-        print(f"Added point at original coordinates: {orig_coords}")
+        orig_coords = (point_on_frame[0], point_on_frame[1])
+        print(f"Added point at: ({orig_coords[0]:.2f}, {orig_coords[1]:.2f})")
         state.points.append(orig_coords)
     elif event == cv2.EVENT_RBUTTONDOWN:
-        detection_radius = 15 / state.zoom # Radius is smaller when zoomed in
+        detection_radius = 15 / state.zoom
         point_to_remove = None
         for p in state.points:
-            distance = np.linalg.norm(np.array(p) - point_on_frame)
-            if distance < detection_radius:
+            if np.linalg.norm(np.array(p) - point_on_frame) < detection_radius:
                 point_to_remove = p
                 break
         if point_to_remove:
             state.points.remove(point_to_remove)
-            print(f"Removed point near: {point_to_remove}")
-
+            print(f"Removed point near: ({point_to_remove[0]:.2f}, {point_to_remove[1]:.2f})")
 
 def _draw_ui(canvas, state: UIState, num_points):
-    """Draws all header buttons and text."""
-    # --- Draw Buttons ---
     next_enabled = num_points == 3
+    color = ui_components.COLOR_BUTTON_HOVER if state.hover_target == 'next' and next_enabled else (ui_components.COLOR_BUTTON if next_enabled else ui_components.COLOR_BUTTON_DISABLED)
+    text_color = ui_components.COLOR_TEXT if next_enabled else ui_components.COLOR_TEXT_DISABLED
+    ui_components.draw_button(canvas, "Next", state.next_button_rect, color, text_color)
     
-    # Reset Button
-    color = COLOR_BUTTON_HOVER if state.hover_target == 'reset' else COLOR_BUTTON
-    _draw_button(canvas, "Reset", state.reset_button_rect, color, COLOR_TEXT)
+    text_start_x = ui_components.SIDEBAR_WIDTH + ui_components.PADDING
     
-    # Next Button
-    color = COLOR_BUTTON_HOVER if state.hover_target == 'next' and next_enabled else (COLOR_BUTTON if next_enabled else COLOR_BUTTON_DISABLED)
-    text_color = COLOR_TEXT if next_enabled else COLOR_TEXT_DISABLED
-    _draw_button(canvas, "Next", state.next_button_rect, color, text_color)
+    title_text = "Step 1: Calibrate Corner Points"
+    status_text = f"Points Selected: {num_points}/3"
+    instruction_1 = "Click on the three designated corner points on the physical rig."
+    instruction_2 = "Zoom: Mouse Wheel | Pan: Middle-Click | Remove Point: Right-Click"
     
-    # --- Draw Status and Instruction Text ---
-    status_text = f"Points: {num_points}/3"
-    instruction_text = "Zoom: Mouse Wheel | Pan: Middle-Click Drag"
-    
-    cv2.putText(canvas, status_text, (state.reset_button_rect[0] + BUTTON_WIDTH + PADDING*2, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, COLOR_TEXT, 1, cv2.LINE_AA)
-    cv2.putText(canvas, instruction_text, (state.reset_button_rect[0] + BUTTON_WIDTH + PADDING*2, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180,180,180), 1, cv2.LINE_AA)
-
-
-def _draw_button(canvas, text, rect, color, text_color):
-    """Helper function to draw a single button."""
-    x, y, w, h = rect
-    cv2.rectangle(canvas, (x, y), (x + w, y + h), color, -1)
-    cv2.rectangle(canvas, (x, y), (x + w, y + h), (0,0,0), 1)
-
-    text_size, _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-    text_x = x + (w - text_size[0]) // 2
-    text_y = y + (h + text_size[1]) // 2
-    cv2.putText(canvas, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 1, cv2.LINE_AA)
-
-def _is_point_in_rect(px, py, rect):
-    """Helper function to check if a point is inside a rectangle."""
-    x, y, w, h = rect
-    return x <= px <= x + w and y <= py <= y + h
+    cv2.putText(canvas, title_text, (text_start_x, ui_components.Y_TITLE), cv2.FONT_HERSHEY_SIMPLEX, 0.8, ui_components.COLOR_TEXT, 2, cv2.LINE_AA)
+    cv2.putText(canvas, status_text, (text_start_x, ui_components.Y_STATUS), cv2.FONT_HERSHEY_SIMPLEX, 0.7, ui_components.COLOR_TEXT, 1, cv2.LINE_AA)
+    cv2.putText(canvas, instruction_1, (text_start_x, ui_components.Y_INSTRUCTION_1), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180,180,180), 1, cv2.LINE_AA)
+    cv2.putText(canvas, instruction_2, (text_start_x, ui_components.Y_INSTRUCTION_2), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180,180,180), 1, cv2.LINE_AA)
