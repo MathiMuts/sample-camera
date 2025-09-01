@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 from . import ui_components
+import os
 
 COLOR_POINT = (40, 40, 240) # BGR
 
@@ -51,7 +52,7 @@ class CalibrationFrame(tk.Frame):
             title="Step 1: Calibrate", 
             instructions=instructions, 
             widgets_config=sidebar_config,
-            image_path="help-image-calibration.png"
+            image_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "help-image-calibration.png")
         )
         sidebar.grid(row=0, column=1, sticky="ns")
 
