@@ -1,0 +1,11 @@
+name,job_type,,,,,,,,
+RBS25_123,rbs,,,,,,,,
+,,,,,,,,,
+type,sample_name,charge_total,x,y,phi,zeta,det,theta
+rbs_random,wvchjv,RBS25_123_01,15.95,12.75,15,,0.15,170,11
+rbs_random,asvhj bs,RBS25_123_02,15.26,26.08,15,,0.15,170,11
+rbs_random,sa#@,RBS25_123_03,15.03,43.99,15,,0.15,170,11
+rbs_random,vubsdvo,RBS25_123_04,16.42,57.29,15,,0.15,170,11
+rbs_random,AVkjds,RBS25_123_05,15.75,73.12,15,,0.15,170,11
+rbs_random,avjad,RBS25_123_06,14.58,81.04,15,,0.15,170,11
+rbs_random,asvij,RBS25_123_AZ,13.49,96.04,15,,0.15,170,11

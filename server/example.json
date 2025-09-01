@@ -1,0 +1,47 @@
+{
+    "request_name": "RBS25_123",
+    "samples": [
+        {
+            "file": "01",
+            "sample_id": "wvchjv",
+            "x": 15.95,
+            "y": 12.75
+        },
+        {
+            "file": "02",
+            "sample_id": "asvhj bs",
+            "x": 15.26,
+            "y": 26.08
+        },
+        {
+            "file": "03",
+            "sample_id": "sa#@",
+            "x": 15.03,
+            "y": 43.99
+        },
+        {
+            "file": "04",
+            "sample_id": "vubsdvo",
+            "x": 16.42,
+            "y": 57.29
+        },
+        {
+            "file": "05",
+            "sample_id": "AVkjds",
+            "x": 15.75,
+            "y": 73.12
+        },
+        {
+            "file": "06",
+            "sample_id": "avjad",
+            "x": 14.58,
+            "y": 81.04
+        },
+        {
+            "file": "AZ",
+            "sample_id": "asvij",
+            "x": 13.49,
+            "y": 96.04
+        }
+    ]
+}
