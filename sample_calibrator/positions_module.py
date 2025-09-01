@@ -50,16 +50,21 @@ class SamplePositionsFrame(tk.Frame):
         self._is_active = False
         self.sample_points = []
         self.hover_coords_mm = None
+
+        self.display_scale = 1.0
+        self.pad_x = 0
+        self.pad_y = 0
+
         # --- Inline Edit State ---
         self.edit_entry = None
-        self.edit_item_id = None # Treeview item ID (e.g., I001)
-        self.edit_data_idx = None  # Index in the self.sample_points list
-        self.edit_data_key = None  # Key being edited ('file' or 'sample_id')
+        self.edit_item_id = None
+        self.edit_data_idx = None
+        self.edit_data_key = None
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
-        self.video_label = tk.Label(self, borderwidth=0, highlightthickness=0, anchor=tk.NW)
+        self.video_label = tk.Label(self, borderwidth=0, highlightthickness=0, bg="black")
         self.video_label.grid(row=0, column=0, sticky="nsew")
 
         # --- Sidebar ---
@@ -114,7 +119,6 @@ class SamplePositionsFrame(tk.Frame):
         self.btn_push = ttk.Button(bottom_btn_frame, text="Push", command=self._push_data, state="disabled")
         self.btn_push.pack(side="right", expand=True, padx=(5, 0))
         
-        # --- Event Bindings ---
         self.video_label.bind("<Button>", self.on_mouse_event)
         self.video_label.bind("<Motion>", self.on_mouse_hover)
         self.video_label.bind("<Leave>", self.on_mouse_leave)
@@ -129,7 +133,7 @@ class SamplePositionsFrame(tk.Frame):
         if self.edit_entry: self._cancel_edit()
         ret, frame = self.cap.read()
         if ret:
-            frame_h, frame_w, _ = cv2.flip(frame, -1).shape
+            frame_h, frame_w, _ = frame.shape
             self.ui_state = ui_components.BaseUIState(frame_w, frame_h)
         self.video_loop()
 
@@ -137,44 +141,75 @@ class SamplePositionsFrame(tk.Frame):
 
     def video_loop(self):
         if not self._is_active or self.ui_state is None: return
+
+        label_w = self.video_label.winfo_width()
+        label_h = self.video_label.winfo_height()
+
+        if label_w < 10 or label_h < 10:
+            self.after(15, self.video_loop)
+            return
+
         ret, frame = self.cap.read()
         if ret:
+            # --- CHANGE: Flip the camera frame ---
             frame = cv2.flip(frame, -1)
+            
+            cam_h, cam_w, _ = frame.shape
             drawing_frame = frame.copy()
             _draw_dynamic_grid(drawing_frame, self.controller.final_rectangle_corners, self.ui_state, self.sample_points)
+            
             M = np.array([[self.ui_state.zoom, 0, -self.ui_state.pan_offset[0] * self.ui_state.zoom],
                           [0, self.ui_state.zoom, -self.ui_state.pan_offset[1] * self.ui_state.zoom]])
             view_frame = cv2.warpAffine(drawing_frame, M, (self.ui_state.frame_width, self.ui_state.frame_height))
+
+            self.display_scale = min(label_w / cam_w, label_h / cam_h)
+            disp_w = int(cam_w * self.display_scale)
+            disp_h = int(cam_h * self.display_scale)
+            resized_frame = cv2.resize(view_frame, (disp_w, disp_h), interpolation=cv2.INTER_AREA)
+
+            canvas = np.zeros((label_h, label_w, 3), dtype=np.uint8)
+            self.pad_x = (label_w - disp_w) // 2
+            self.pad_y = (label_h - disp_h) // 2
+            canvas[self.pad_y:self.pad_y+disp_h, self.pad_x:self.pad_x+disp_w] = resized_frame
 
             if self.hover_coords_mm is not None:
                 text = f"({self.hover_coords_mm[0]:.1f},{self.hover_coords_mm[1]:.1f}) mm"
                 font, scale, thickness = cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
                 (text_w, text_h), baseline = cv2.getTextSize(text, font, scale, thickness)
                 padding, margin = 5, 10
-                view_h, view_w, _ = view_frame.shape
-                box_x1 = view_w - text_w - padding * 2 - margin
-                box_y1 = view_h - text_h - baseline - padding * 2 - margin
-                box_x2 = view_w - margin
-                box_y2 = view_h - margin
-                cv2.rectangle(view_frame, (box_x1, box_y1), (box_x2, box_y2), (255, 255, 255), -1)
-                cv2.putText(view_frame, text, (box_x1 + padding, box_y2 - padding - (baseline // 2)), font, scale, (0, 0, 0), thickness, cv2.LINE_AA)
+                box_x1 = label_w - text_w - padding * 2 - margin
+                box_y1 = label_h - text_h - baseline - padding * 2 - margin
+                box_x2 = label_w - margin
+                box_y2 = label_h - margin
+                cv2.rectangle(canvas, (box_x1, box_y1), (box_x2, box_y2), (255, 255, 255), -1)
+                cv2.putText(canvas, text, (box_x1 + padding, box_y2 - padding - (baseline // 2)), font, scale, (0, 0, 0), thickness, cv2.LINE_AA)
 
-            img = cv2.cvtColor(view_frame, cv2.COLOR_BGR2RGB)
+            img = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
             self.imgtk = ImageTk.PhotoImage(image=Image.fromarray(img))
             self.video_label.config(image=self.imgtk)
         self.after(15, self.video_loop)
 
+    def _view_to_cam_coords(self, x, y):
+        if self.display_scale == 0: return 0, 0
+        cam_x = (x - self.pad_x) / self.display_scale
+        cam_y = (y - self.pad_y) / self.display_scale
+        return cam_x, cam_y
+
     def on_mouse_hover(self, event):
         if self.ui_state is None: return
-        cam_x = (event.x / self.ui_state.zoom) + self.ui_state.pan_offset[0]
-        cam_y = (event.y / self.ui_state.zoom) + self.ui_state.pan_offset[1]
-        self.hover_coords_mm = self._transform_cam_to_real((cam_x, cam_y))
+        cam_x, cam_y = self._view_to_cam_coords(event.x, event.y)
+        point_on_original_frame = self.ui_state.pan_offset + np.array([cam_x, cam_y]) / self.ui_state.zoom
+        self.hover_coords_mm = self._transform_cam_to_real(point_on_original_frame)
 
     def on_mouse_leave(self, event): self.hover_coords_mm = None
 
     def on_mouse_event(self, event):
         if self.ui_state is None: return
         if self.edit_entry: self._commit_edit()
+
+        cam_x, cam_y = self._view_to_cam_coords(event.x, event.y)
+        cam_x = np.clip(cam_x, 0, self.ui_state.frame_width - 1)
+        cam_y = np.clip(cam_y, 0, self.ui_state.frame_height - 1)
 
         tk_to_cv2_map = {
             (tk.EventType.ButtonPress, 2): cv2.EVENT_MBUTTONDOWN,
@@ -184,16 +219,17 @@ class SamplePositionsFrame(tk.Frame):
         }
 
         if event.type == tk.EventType.ButtonPress:
-            if event.num == 1: # Left-click to add point
-                point_on_cam = ui_components.handle_view_controls(cv2.EVENT_LBUTTONDOWN, event.x, event.y, 0, self.ui_state)
+            if event.num == 1:
+                point_on_cam = ui_components.handle_view_controls(cv2.EVENT_LBUTTONDOWN, cam_x, cam_y, 0, self.ui_state)
                 point_in_real_mm = self._transform_cam_to_real(point_on_cam)
                 if point_in_real_mm is not None:
                     new_file_id = str(len(self.sample_points) + 1)
+                    if len(new_file_id) == 1: new_file_id = "0" + new_file_id
                     self.sample_points.append({'file': new_file_id, 'sample_id': '', 'cam_coords': point_on_cam, 'real_coords': point_in_real_mm})
                     self._update_treeview()
                     self._update_button_states()
-            elif event.num == 3: # Right-click to delete point
-                point_on_cam = ui_components.handle_view_controls(cv2.EVENT_RBUTTONDOWN, event.x, event.y, 0, self.ui_state)
+            elif event.num == 3:
+                point_on_cam = ui_components.handle_view_controls(cv2.EVENT_RBUTTONDOWN, cam_x, cam_y, 0, self.ui_state)
                 if self.sample_points:
                     detection_radius = 15 / self.ui_state.zoom
                     distances = [np.linalg.norm(np.array(p['cam_coords']) - point_on_cam) for p in self.sample_points]
@@ -208,7 +244,7 @@ class SamplePositionsFrame(tk.Frame):
         cv2_event = tk_to_cv2_map.get((event.type, btn_num))
         if cv2_event:
             flags = event.delta if cv2_event == cv2.EVENT_MOUSEWHEEL else 0
-            ui_components.handle_view_controls(cv2_event, event.x, event.y, flags, self.ui_state)
+            ui_components.handle_view_controls(cv2_event, cam_x, cam_y, flags, self.ui_state)
 
     def _update_button_states(self):
         has_points = len(self.sample_points) > 0
@@ -279,18 +315,13 @@ class SamplePositionsFrame(tk.Frame):
         self.edit_item_id = self.tree.identify_row(event.y)
         if not self.edit_item_id: return
 
-        # --- BUG FIX: Use the Treeview index to find the data item ---
-        # This is robust and prevents order scrambling because the visual index
-        # in the tree always matches the data index in self.sample_points.
         try:
             self.edit_data_idx = self.tree.index(self.edit_item_id)
         except ValueError:
-            # This can happen in rare race conditions; safely ignore.
             return
             
         self.edit_data_key = column_map[column_id]
         
-        # Proceed with creating the edit box
         x, y, w, h = self.tree.bbox(self.edit_item_id, column=column_id)
         self.edit_entry = ttk.Entry(self.tree, font=TREEVIEW_FONT)
         self.edit_entry.place(x=x, y=y, width=w, height=h)
@@ -308,7 +339,6 @@ class SamplePositionsFrame(tk.Frame):
         if not self.edit_entry: return
         new_value = self.edit_entry.get().strip()
         if self.edit_data_idx is not None and self.edit_data_key:
-            # Make sure index is still valid before writing
             if self.edit_data_idx < len(self.sample_points):
                 self.sample_points[self.edit_data_idx][self.edit_data_key] = new_value
         
