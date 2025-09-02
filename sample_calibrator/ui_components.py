@@ -20,12 +20,12 @@ import numpy as np
 from PIL import Image, ImageTk
 
 # --- UI Configuration Constants ---
-SIDEBAR_WIDTH = 275
+SIDEBAR_WIDTH = 600
 BG_COLOR = "#2d2d2d"
 FG_COLOR_LIGHT = "#ffffff"
 FG_COLOR_MUTED = "#cccccc"
-FONT_TITLE = ("Segoe UI", 16)
-FONT_BODY = ("Segoe UI", 10)
+FONT_TITLE = ("Segoe UI", 24)
+FONT_BODY = ("Segoe UI", 14)
 SIDEBAR_PADDING = 10 
 
 
@@ -74,17 +74,20 @@ class UISidebar(tk.Frame):
         button_frame.pack(side="bottom", pady=20, padx=SIDEBAR_PADDING, fill="x")
 
         if 'buttons' in widgets_config:
+            style = ttk.Style(self)
+            style.configure('Sidebar.TButton', font=FONT_BODY)
+
             buttons = widgets_config['buttons']
             num_buttons = len(buttons)
             for i, btn_config in enumerate(buttons):
-                btn = ttk.Button(button_frame, text=btn_config['text'], command=btn_config['command'])
+                btn = ttk.Button(button_frame, text=btn_config['text'], command=btn_config['command'], style='Sidebar.TButton')
                 
                 if num_buttons == 1:
                     btn.pack(side="right", fill="x")
-                else: # Special layout for two buttons.
+                else:
                     side = "left" if i == 0 else "right"
                     padx = (0, 5) if i == 0 else (5, 0)
-                    btn.pack(side=side, expand=True, padx=padx)
+                    btn.pack(side=side, expand=True, padx=padx, ipadx=15, ipady=5)
 
                 self.created_widgets[btn_config['text']] = btn
 

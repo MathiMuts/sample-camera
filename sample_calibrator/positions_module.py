@@ -1,19 +1,3 @@
-# positions_module.py
-
-"""
-This file defines the final UI screen (`SamplePositionsFrame`) for the application.
-
-This is the most complex step. Its responsibilities are:
-1.  Using the confirmed rectangle from the previous step, it performs a
-    perspective transform to overlay a real-world grid (in mm) onto the video.
-2.  Allows the user to left-click within the rectangle to add sample points.
-3.  Converts the pixel coordinates of each click into real-world mm coordinates.
-4.  Displays collected points in a table with editable "File" and "Sample ID" columns.
-5.  Provides an input for a "Request Name".
-6.  Provides a "Push" button to format the final data into JSON and send it to
-    a predefined API endpoint.
-"""
-
 import tkinter as tk
 from tkinter import ttk, messagebox
 import cv2
@@ -22,9 +6,20 @@ from PIL import Image, ImageTk
 from . import ui_components
 import requests
 import json
+import csv
+import io
 
 # --- API Configuration ---
 PUSH_ENDPOINT_URL = "https://httpbin.org/post"
+
+# --- CSV Generation Constants ---
+JOB_TYPE = "rbs"
+SAMPLE_TYPE = "rbs_random"
+PHI = 15
+ZETA = ""
+DET = 0.15
+THETA = 170
+RUN_NUMBER = 11
 
 # --- Grid Configuration Constants ---
 RECT_REAL_WIDTH_MM = 130
@@ -39,7 +34,7 @@ GRID_THICKNESS_MAJOR = 1
 GRID_THICKNESS_MINOR = 1
 COLOR_SAMPLE_POINT = (240, 180, 0)
 COLOR_SAMPLE_TEXT = (255, 255, 255)
-TREEVIEW_FONT = ("Consolas", 10)
+TREEVIEW_FONT = ("Consolas", 14)
 
 class SamplePositionsFrame(tk.Frame):
     def __init__(self, parent, controller, cap):
@@ -50,12 +45,12 @@ class SamplePositionsFrame(tk.Frame):
         self._is_active = False
         self.sample_points = []
         self.hover_coords_mm = None
+        self.last_rendered_frame = None
 
         self.display_scale = 1.0
         self.pad_x = 0
         self.pad_y = 0
 
-        # --- Inline Edit State ---
         self.edit_entry = None
         self.edit_item_id = None
         self.edit_data_idx = None
@@ -67,7 +62,6 @@ class SamplePositionsFrame(tk.Frame):
         self.video_label = tk.Label(self, borderwidth=0, highlightthickness=0, bg="black")
         self.video_label.grid(row=0, column=0, sticky="nsew")
 
-        # --- Sidebar ---
         sidebar = tk.Frame(self, width=ui_components.SIDEBAR_WIDTH, bg=ui_components.BG_COLOR)
         sidebar.pack_propagate(False)
         sidebar.grid(row=0, column=1, sticky="ns")
@@ -78,7 +72,6 @@ class SamplePositionsFrame(tk.Frame):
         lbl_inst = tk.Label(sidebar, text=instructions, justify=tk.LEFT, wraplength=ui_components.SIDEBAR_WIDTH-20, font=ui_components.FONT_BODY, bg=ui_components.BG_COLOR, fg=ui_components.FG_COLOR_MUTED)
         lbl_inst.pack(pady=10, padx=10, anchor="w", fill="x")
 
-        # --- Request Name Input ---
         req_frame = tk.Frame(sidebar, bg=ui_components.BG_COLOR)
         req_frame.pack(pady=(10, 5), padx=10, fill="x")
         lbl_req = tk.Label(req_frame, text="Request Name:", font=ui_components.FONT_BODY, bg=ui_components.BG_COLOR, fg=ui_components.FG_COLOR_LIGHT)
@@ -87,7 +80,6 @@ class SamplePositionsFrame(tk.Frame):
         entry_req = ttk.Entry(req_frame, textvariable=self.request_name_var)
         entry_req.pack(side="left", fill="x", expand=True)
 
-        # --- Sample Table (Treeview) ---
         table_frame = tk.Frame(sidebar, bg=ui_components.BG_COLOR)
         table_frame.pack(pady=5, padx=10, fill="both", expand=True)
 
@@ -151,7 +143,6 @@ class SamplePositionsFrame(tk.Frame):
 
         ret, frame = self.cap.read()
         if ret:
-            # --- CHANGE: Flip the camera frame ---
             frame = cv2.flip(frame, -1)
             
             cam_h, cam_w, _ = frame.shape
@@ -183,7 +174,8 @@ class SamplePositionsFrame(tk.Frame):
                 box_y2 = label_h - margin
                 cv2.rectangle(canvas, (box_x1, box_y1), (box_x2, box_y2), (255, 255, 255), -1)
                 cv2.putText(canvas, text, (box_x1 + padding, box_y2 - padding - (baseline // 2)), font, scale, (0, 0, 0), thickness, cv2.LINE_AA)
-
+            
+            self.last_rendered_frame = canvas.copy()
             img = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
             self.imgtk = ImageTk.PhotoImage(image=Image.fromarray(img))
             self.video_label.config(image=self.imgtk)
@@ -223,8 +215,7 @@ class SamplePositionsFrame(tk.Frame):
                 point_on_cam = ui_components.handle_view_controls(cv2.EVENT_LBUTTONDOWN, cam_x, cam_y, 0, self.ui_state)
                 point_in_real_mm = self._transform_cam_to_real(point_on_cam)
                 if point_in_real_mm is not None:
-                    new_file_id = str(len(self.sample_points) + 1)
-                    if len(new_file_id) == 1: new_file_id = "0" + new_file_id
+                    new_file_id = str(len(self.sample_points) + 1).zfill(2)
                     self.sample_points.append({'file': new_file_id, 'sample_id': '', 'cam_coords': point_on_cam, 'real_coords': point_in_real_mm})
                     self._update_treeview()
                     self._update_button_states()
@@ -264,19 +255,57 @@ class SamplePositionsFrame(tk.Frame):
         if not self.sample_points:
             messagebox.showwarning("No Data", "There are no sample points to push.")
             return
+        if self.last_rendered_frame is None:
+            messagebox.showerror("Push Failed", "Could not capture a screenshot. Please try again.")
+            return
 
-        samples = [{"file": p['file'], "sample_id": p['sample_id'], "x": round(float(p['real_coords'][0]), 2), "y": round(float(p['real_coords'][1]), 2)} for p in self.sample_points]
-        payload = {"request_name": request_name, "samples": samples}
+        # 1. Generate CSV data in memory
+        csv_output = io.StringIO()
+        writer = csv.writer(csv_output)
+        writer.writerow(['name', 'job_type'] + [''] * 8)
+        writer.writerow([request_name, JOB_TYPE] + [''] * 8)
+        writer.writerow([''] * 10)
+        writer.writerow(['type', 'sample_name', 'charge_total', 'x', 'y', 'phi', 'zeta', 'det', 'theta', 'run'])
 
-        print("\n--- Pushing JSON Payload ---")
-        print(json.dumps(payload, indent=4))
-        print("--------------------------\n")
+        for p in self.sample_points:
+            charge_total = f"{request_name}_{p['file']}"
+            writer.writerow([
+                SAMPLE_TYPE, p['sample_id'], charge_total,
+                round(float(p['real_coords'][0]), 2), round(float(p['real_coords'][1]), 2),
+                PHI, ZETA, DET, THETA, RUN_NUMBER
+            ])
+        
+        # 2. Encode the screenshot
+        is_success, buffer = cv2.imencode(".png", self.last_rendered_frame)
+        if not is_success:
+            messagebox.showerror("Push Failed", "Could not encode screenshot to PNG format.")
+            return
+        image_bytes = buffer.tobytes()
+
+        # 3. Prepare multipart/form-data payload
+        csv_filename = f"{request_name}.csv"
+        screenshot_filename = f"{request_name}_screenshot.png"
+        files = {
+            'csv_file': (csv_filename, csv_output.getvalue(), 'text/csv'),
+            'screenshot_file': (screenshot_filename, image_bytes, 'image/png')
+        }
+
+        print(f"\n--- Pushing Multipart Form Data ---")
+        print(f"Request Name: {request_name}")
+        print(f"CSV File: {csv_filename}")
+        print(f"Screenshot File: {screenshot_filename}")
+        print("-----------------------------------\n")
 
         try:
-            headers = {'Content-Type': 'application/json'}
-            response = requests.post(PUSH_ENDPOINT_URL, data=json.dumps(payload), headers=headers, timeout=10)
+            response = requests.post(PUSH_ENDPOINT_URL, files=files, timeout=10)
             response.raise_for_status()
-            messagebox.showinfo("Success", f"Data successfully pushed.\nStatus Code: {response.status_code}")
+            
+            # Show a more detailed success message using httpbin.org's response
+            response_json = response.json()
+            files_received = list(response_json.get('files', {}).keys())
+            message = f"Data successfully pushed.\nStatus Code: {response.status_code}\nFiles Received: {', '.join(files_received)}"
+            messagebox.showinfo("Success", message)
+            
         except requests.exceptions.RequestException as e:
             messagebox.showerror("Push Failed", f"An error occurred while sending data:\n{e}")
 
@@ -294,7 +323,7 @@ class SamplePositionsFrame(tk.Frame):
     
     def _renumber_files(self):
         for i, point in enumerate(self.sample_points):
-            point['file'] = str(i + 1)
+            point['file'] = str(i + 1).zfill(2)
 
     def _update_treeview(self):
         self.tree.delete(*self.tree.get_children())
