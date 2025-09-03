@@ -1,5 +1,0 @@
-name,job_type,,,,,,,,
-RBS25_123,rbs,,,,,,,,
-,,,,,,,,,
-type,sample_name,charge_total,x,y,phi,zeta,det,theta
-rbs_random,PCO-218,RBS25_123_01,70000,10,15,,0.15,170,11

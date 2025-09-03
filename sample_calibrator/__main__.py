@@ -31,33 +31,20 @@ class Application(tk.Tk):
 
         self.title("Sample Calibrator")
 
-        # --- Camera Initialization (moved up to determine window size) ---
+        # --- CHANGE: Set to fullscreen ---
+        self.attributes('-fullscreen', True) 
+
+        # --- Camera Initialization ---
         self.cap = self.initialize_camera()
         if not self.cap:
             messagebox.showerror("Camera Error", "Could not open video stream. Please check camera connection.")
             self.destroy()
             return
 
-        # --- Dynamic Window Sizing ---
-        cam_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        cam_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.initial_width = cam_width + SIDEBAR_WIDTH
-        self.initial_height = cam_height
-        self.aspect_ratio = self.initial_width / self.initial_height
-
-        self.geometry(f"{self.initial_width}x{self.initial_height}")
-        # --- CHANGE: Enable Resizing ---
-        self.resizable(True, True)
-
-        # --- CHANGE: Add logic to maintain aspect ratio on resize ---
-        self._is_resizing = False
-        self._last_width = self.initial_width
-        self._last_height = self.initial_height
-        self.bind('<Configure>', self.on_resize)
-        # Set a minimum size for the window
-        self.minsize(int(self.initial_width / 2), int(self.initial_height / 2))
-
-
+        # --- REMOVED: Resizing and geometry logic ---
+        # The dynamic window sizing, aspect ratio enforcement, and resizable bindings
+        # have been removed as they are not needed in fullscreen mode.
+        
         # --- Application Data ---
         # State shared between different frames.
         self.calibrated_points = None
@@ -87,32 +74,7 @@ class Application(tk.Tk):
         # Ensure camera is released on close via the window's close button.
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-    def on_resize(self, event):
-        """On window resize, enforce the aspect ratio."""
-        if self._is_resizing:
-            return
-
-        # Prevent recursive calls
-        if event.widget == self and (self._last_width != event.width or self._last_height != event.height):
-            self._is_resizing = True
-            
-            # Determine which dimension changed more to decide how to adjust
-            width_change = abs(event.width - self._last_width)
-            height_change = abs(event.height - self._last_height)
-
-            if width_change > height_change:
-                new_height = int(event.width / self.aspect_ratio)
-                new_width = event.width
-            else:
-                new_width = int(event.height * self.aspect_ratio)
-                new_height = event.height
-            
-            self.geometry(f"{new_width}x{new_height}")
-            self._last_width = new_width
-            self._last_height = new_height
-            
-            self._is_resizing = False
-
+    # --- REMOVED: on_resize method is no longer needed ---
 
     def initialize_camera(self):
         """Tries to find and open a camera."""
