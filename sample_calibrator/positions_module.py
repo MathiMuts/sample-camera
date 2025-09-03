@@ -4,13 +4,13 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 from . import ui_components
-import requests
-import json
+import os
 import csv
 import io
 
-# --- API Configuration ---
-PUSH_ENDPOINT_URL = "https://httpbin.org/post"
+# --- File Path Configuration ---
+IMAGES_PATH = "mnt/winbe_wasp_rbs_images"
+RECEPIES_PATH = "mnt/winbe_wasp_rbs_recipes"
 
 # --- CSV Generation Constants ---
 JOB_TYPE = "rbs"
@@ -108,8 +108,8 @@ class SamplePositionsFrame(tk.Frame):
         self.btn_left_action = ttk.Button(bottom_btn_frame, text="Back", command=self.on_back)
         self.btn_left_action.pack(side="left", expand=True, padx=(0, 5))
         
-        self.btn_push = ttk.Button(bottom_btn_frame, text="Push", command=self._push_data, state="disabled")
-        self.btn_push.pack(side="right", expand=True, padx=(5, 0))
+        self.btn_save = ttk.Button(bottom_btn_frame, text="Save", command=self._push_data, state="disabled")
+        self.btn_save.pack(side="right", expand=True, padx=(5, 0))
         
         self.video_label.bind("<Button>", self.on_mouse_event)
         self.video_label.bind("<Motion>", self.on_mouse_hover)
@@ -241,10 +241,10 @@ class SamplePositionsFrame(tk.Frame):
         has_points = len(self.sample_points) > 0
         if has_points:
             self.btn_left_action.config(text="Reset", command=self._reset_points)
-            self.btn_push.config(state="normal")
+            self.btn_save.config(state="normal")
         else:
             self.btn_left_action.config(text="Back", command=self.on_back)
-            self.btn_push.config(state="disabled")
+            self.btn_save.config(state="disabled")
 
     def _push_data(self):
         if self.edit_entry: self._commit_edit()
@@ -253,13 +253,12 @@ class SamplePositionsFrame(tk.Frame):
             messagebox.showwarning("Missing Info", "Please enter a Request Name.")
             return
         if not self.sample_points:
-            messagebox.showwarning("No Data", "There are no sample points to push.")
+            messagebox.showwarning("No Data", "There are no sample points to save.")
             return
         if self.last_rendered_frame is None:
-            messagebox.showerror("Push Failed", "Could not capture a screenshot. Please try again.")
+            messagebox.showerror("Save Failed", "Could not capture a screenshot. Please try again.")
             return
 
-        # 1. Generate CSV data in memory
         csv_output = io.StringIO()
         writer = csv.writer(csv_output)
         writer.writerow(['name', 'job_type'] + [''] * 8)
@@ -275,39 +274,43 @@ class SamplePositionsFrame(tk.Frame):
                 PHI, ZETA, DET, THETA, RUN_NUMBER
             ])
         
-        # 2. Encode the screenshot
         is_success, buffer = cv2.imencode(".png", self.last_rendered_frame)
         if not is_success:
-            messagebox.showerror("Push Failed", "Could not encode screenshot to PNG format.")
+            messagebox.showerror("Save Failed", "Could not encode screenshot to PNG format.")
             return
         image_bytes = buffer.tobytes()
 
-        # 3. Prepare multipart/form-data payload
+        try:
+            os.makedirs(IMAGES_PATH, exist_ok=True)
+            os.makedirs(RECEPIES_PATH, exist_ok=True)
+        except OSError as e:
+            messagebox.showerror("Save Failed", f"Could not create directories:\n{e}")
+            return
+
         csv_filename = f"{request_name}.csv"
         screenshot_filename = f"{request_name}_screenshot.png"
-        files = {
-            'csv_file': (csv_filename, csv_output.getvalue(), 'text/csv'),
-            'screenshot_file': (screenshot_filename, image_bytes, 'image/png')
-        }
+        
+        csv_filepath = os.path.join(RECEPIES_PATH, csv_filename)
+        screenshot_filepath = os.path.join(IMAGES_PATH, screenshot_filename)
 
-        print(f"\n--- Pushing Multipart Form Data ---")
+        print(f"\n--- Saving Files Locally ---")
         print(f"Request Name: {request_name}")
-        print(f"CSV File: {csv_filename}")
-        print(f"Screenshot File: {screenshot_filename}")
-        print("-----------------------------------\n")
+        print(f"Saving CSV to: {csv_filepath}")
+        print(f"Saving Screenshot to: {screenshot_filepath}")
+        print("----------------------------\n")
 
         try:
-            response = requests.post(PUSH_ENDPOINT_URL, files=files, timeout=10)
-            response.raise_for_status()
+            with open(csv_filepath, 'w', newline='') as f:
+                f.write(csv_output.getvalue())
             
-            # Show a more detailed success message using httpbin.org's response
-            response_json = response.json()
-            files_received = list(response_json.get('files', {}).keys())
-            message = f"Data successfully pushed.\nStatus Code: {response.status_code}\nFiles Received: {', '.join(files_received)}"
+            with open(screenshot_filepath, 'wb') as f:
+                f.write(image_bytes)
+
+            message = f"Files saved successfully!\n\nCSV: {os.path.abspath(csv_filepath)}\nImage: {os.path.abspath(screenshot_filepath)}"
             messagebox.showinfo("Success", message)
             
-        except requests.exceptions.RequestException as e:
-            messagebox.showerror("Push Failed", f"An error occurred while sending data:\n{e}")
+        except IOError as e:
+            messagebox.showerror("Save Failed", f"An error occurred while saving files:\n{e}")
 
     def _transform_cam_to_real(self, point_on_cam):
         corners = self.controller.final_rectangle_corners

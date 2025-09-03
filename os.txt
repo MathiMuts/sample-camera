@@ -11,6 +11,18 @@ sudo apt install libgl1 openbox xterm xinit -y
 sudo apt purge unclutter
 python3 -m velv venv
 pip install -r requirements.txt
-sudo reboot
 
-startx
+sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
+# sudo nano /etc/systemd/system/getty@tty1.service.d/override.conf > write the lines: `[Service]`, `ExecStart=`, `ExecStart=-/sbin/agetty --autologin mca --noclear %I $TERM`
+# nano /home/mca/.bash_profile > write lines (without ```):
+    ```
+    #!/bin/bash
+    if [[ -z $DISPLAY ]]; then
+        sleep 2
+        startx
+    fi
+    ```
+
+cd ~
+NOTE: Mount de netwerkdrive!
+sudo reboot
