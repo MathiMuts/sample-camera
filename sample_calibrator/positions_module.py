@@ -9,8 +9,8 @@ import csv
 import io
 
 # --- File Path Configuration ---
-IMAGES_PATH = "mnt/winbe_wasp_rbs_images"
-RECEPIES_PATH = "mnt/winbe_wasp_rbs_recipes"
+IMAGES_PATH = "/mnt/winbe_wasp_rbs_images"
+RECEPIES_PATH = "/mnt/winbe_wasp_rbs_recipes"
 
 # --- CSV Generation Constants ---
 JOB_TYPE = "rbs"
