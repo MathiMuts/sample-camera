@@ -288,7 +288,7 @@ class SamplePositionsFrame(tk.Frame):
             return
 
         csv_filename = f"{request_name}.csv"
-        screenshot_filename = f"{request_name}_screenshot.png"
+        screenshot_filename = f"{request_name}.png"
         
         csv_filepath = os.path.join(RECEPIES_PATH, csv_filename)
         screenshot_filepath = os.path.join(IMAGES_PATH, screenshot_filename)
