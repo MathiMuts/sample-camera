@@ -29,20 +29,12 @@ class Application(tk.Tk):
         self.title("Sample Calibrator")
 
         # --- "Fake" Fullscreen for Minimal X Server Environments ---
-        # Get the actual screen dimensions
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
-
-        # Set the window geometry to fill the entire screen
         self.geometry(f"{screen_width}x{screen_height}+0+0")
-
-        # Remove the window's title bar and borders
         self.overrideredirect(True)
-
-        # --- IMPORTANT: Add an escape key binding to close the app ---
-        # Since overrideredirect removes the 'X' button, we need another way to exit.
         self.bind("<Escape>", lambda e: self.on_closing())
-        # --- End of Fullscreen section ---
+        self.config(cursor="arrow") 
 
 
         # --- Camera Initialization ---
